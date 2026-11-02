@@ -4,3 +4,14 @@ FRAME_HEV_BUTTON=power
 FRAME_HEV_VOLUME=0.65
 # Maximum gap between the first release and the second press.
 FRAME_HEV_DOUBLE_TAP_MS=350
+# Announce automatically while discharging as the battery passes these levels.
+# Comma-separated percentages, or "off". Each level speaks once per discharge.
+FRAME_HEV_THRESHOLDS=20,10,5
+# Seconds between battery checks for those automatic announcements.
+FRAME_HEV_THRESHOLD_POLL=120
+# Which gauge to follow. auto prefers SteamVR's HMD level (what Steam's menu
+# shows) and falls back to the kernel; kernel follows the OS percentage the
+# headset shuts down on; lowest reads both and takes the lower one so warnings
+# are never late. SteamVR can read several points high, so kernel or lowest is
+# the safer choice for warnings.
+FRAME_HEV_BATTERY_SOURCE=auto

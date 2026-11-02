@@ -4,6 +4,7 @@ Double-tap your Steam Frame's power button to hear **“Power level is … perce
 in the original Half-Life HEV suit voice.
 
 - **Double tap while awake:** reads the exact battery percentage.
+- **Automatic announcements:** speaks 20%, 10%, and 5% as the battery drains.
 - **Single press:** puts the Frame to sleep, with a short 350 ms delay.
 - **Hold:** opens Steam's normal power menu.
 
@@ -139,6 +140,9 @@ Edit `~/.config/frame-hev/environment`, then run
 | `FRAME_HEV_VOLUME` | `0.65` | Announcement volume from `0.0` to `1.0`, relative to headset volume |
 | `FRAME_HEV_DOUBLE_TAP_MS` | `350` | Maximum gap between the first release and second press |
 | `FRAME_HEV_BUTTON` | `power` | Use `aux` for the button above power instead |
+| `FRAME_HEV_THRESHOLDS` | `20,10,5` | Levels announced while discharging, or `off` |
+| `FRAME_HEV_THRESHOLD_POLL` | `120` | Seconds between battery checks for those announcements |
+| `FRAME_HEV_BATTERY_SOURCE` | `auto` | `auto` (SteamVR first), `kernel`, `steamvr`, or `lowest` |
 
 Aux mode also allows the button's normal action to occur. Power mode is the
 tested default. After waking the Frame, wait one second before double-tapping;
@@ -147,10 +151,40 @@ the wake press is ignored so it does not immediately put the headset to sleep.
 At 0%, the original “Armor compromised” clip plays, because the HEV vocabulary
 does not contain a recorded zero.
 
-Announcements use SteamVR's headset battery percentage to match Steam's
-display. The kernel's raw battery reading can differ by several points. If
-SteamVR cannot provide a valid reading, HEV uses the kernel value and logs that
-fallback; `frame-hev doctor` shows the selected source and the raw reading.
+Announcements follow `FRAME_HEV_BATTERY_SOURCE`: `auto` (the default) prefers
+SteamVR's headset percentage, which is what Steam's display shows, and falls
+back to the kernel. `kernel` follows the raw OS percentage the headset shuts
+down on; `steamvr` refuses the fallback; `lowest` reads both and uses the lower
+one. The two can differ by several points, so `kernel` or `lowest` is the safer
+choice for low-battery warnings. `~/.local/bin/frame-hev doctor` shows the
+selected source and the live reading.
+
+## Battery thresholds
+
+While the Frame is discharging, HEV speaks on its own as the battery passes
+each configured level — 20%, 10%, and 5% by default:
+
+- Each level is announced once per discharge. It re-arms only after the battery
+  climbs two points above it, so a reading that drifts back and forth does not
+  repeat the same level.
+- Nothing is announced while charging. Charging moves the percentage in both
+  directions and would produce announcements that mean nothing. A level crossed
+  while plugged in still announces on the first reading after you unplug.
+- Nothing is announced right after the service starts. The first reading only
+  arms the levels, so restarting on a low battery stays quiet instead of
+  talking over you.
+- If a single check passes several levels — after a long sleep, for example —
+  only the lowest crossed level is spoken, because that is the level you are
+  actually at.
+
+Set `FRAME_HEV_THRESHOLDS` to choose the levels (`30,15,5`), or to `off` to
+disable automatic announcements. `FRAME_HEV_THRESHOLD_POLL` sets the number of
+seconds between battery checks. Apply either change with
+`~/.local/bin/frame-hev restart`.
+
+Threshold checks read the same gauge as a double tap. If the two gauges
+disagree, set `FRAME_HEV_BATTERY_SOURCE=kernel` or `lowest` so the warning
+matches the level the headset actually shuts down on.
 
 ## Audio
 
