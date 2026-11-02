@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Frame HEV status panel: battery, automatic levels, service, uninstall.
+"""Frame HEV status panel: battery, automatic levels, service, updates, removal.
 
 Launched from the application menu. It reads the installed runtime next to this
 file but never touches the power-button device, so it cannot disturb the
@@ -7,6 +7,7 @@ background service.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -29,8 +30,15 @@ import frame_hev  # noqa: E402  (the installed runtime sits next to this panel)
 CONFIG = Path(os.environ.get("FRAME_HEV_CONFIG", Path.home() / ".config/frame-hev/environment"))
 LAUNCHER = Path.home() / ".local/bin/frame-hev"
 UNIT = "frame-hev.service"
+UPDATER = APP / "update.py" if (APP / "update.py").is_file() else APP / "tools/update.py"
 STATES = {"active", "activating", "deactivating", "failed", "inactive", "maintenance",
           "reloading", "refreshing", "unknown"}
+STATE_TEXT = {"active": ("Running", "#3ba55c"), "activating": ("Starting", "#d9a441"),
+              "deactivating": ("Stopping", "#d9a441"), "failed": ("Failed", "#d9534f"),
+              "inactive": ("Paused", "#8b949e"), "reloading": ("Reloading", "#d9a441"),
+              "refreshing": ("Refreshing", "#d9a441"), "maintenance": ("Maintenance", "#d9a441")}
+THRESHOLD_CHOICES = (25, 20, 15, 10, 5)
+POLL_CHOICES = (30, 60, 120, 300, 600)
 
 
 def read_settings():
@@ -41,19 +49,14 @@ def read_settings():
 
 
 def configured(text, key, default):
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        name, value = stripped.split("=", 1)
-        if name.strip() == key:
-            return value.strip().strip('"\'')
-    return default
+    return frame_hev.parse_settings(text).get(key, default)
 
 
-def settings_problem(text):
-    """Reject settings that would stop the service from starting."""
-    return frame_hev.settings_problem(text)
+def number(values, key, default):
+    try:
+        return float(values.get(key, default))
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def save_settings(text):
@@ -91,6 +94,17 @@ def version():
         return "unknown"
 
 
+def run(command, timeout):
+    """Run one command, returning None on success or a short failure message."""
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as error:
+        return str(error)
+    if result.returncode == 0:
+        return None
+    return (result.stderr or result.stdout).strip() or f"exit status {result.returncode}"
+
+
 def error_dialog(parent, message):
     dialog = Gtk.MessageDialog(transient_for=parent, modal=True, message_type=Gtk.MessageType.ERROR,
                                buttons=Gtk.ButtonsType.CLOSE, text=message)
@@ -103,16 +117,23 @@ class Panel(Gtk.Window):
         super().__init__(title="Frame HEV")
         self.set_icon_name("frame-hev")
         self.set_border_width(20)
-        self.set_default_size(480, -1)
+        self.set_default_size(500, -1)
         self.set_resizable(False)
         self.refreshing = False
+        self.syncing_switch = False
+        self.update_state = "idle"       # idle | checking | offered | updating | done
+        self.update_version = None
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self.add(box)
 
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         heading = Gtk.Label(xalign=0)
         heading.set_markup('<span size="x-large" weight="bold">Frame HEV</span>')
-        box.pack_start(heading, False, False, 0)
+        header.pack_start(heading, False, False, 0)
+        self.status = Gtk.Label(xalign=1)
+        header.pack_end(self.status, False, False, 0)
+        box.pack_start(header, False, False, 0)
 
         self.percent = Gtk.Label(xalign=0)
         self.percent.set_markup('<span size="xx-large" weight="bold">—</span>')
@@ -122,39 +143,56 @@ class Panel(Gtk.Window):
         self.detail.set_line_wrap(True)
         box.pack_start(self.detail, False, False, 0)
 
+        self.bar = Gtk.LevelBar()
+        self.bar.set_min_value(0)
+        self.bar.set_max_value(100)
+        self.bar.set_mode(Gtk.LevelBarMode.CONTINUOUS)
+        self.bar.set_value(0)
+        box.pack_start(self.bar, False, False, 0)
+
         self.levels = Gtk.Label(xalign=0)
         self.levels.set_line_wrap(True)
         box.pack_start(self.levels, False, False, 0)
 
-        self.service = Gtk.Label(xalign=0)
-        box.pack_start(self.service, False, False, 0)
+        service_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        service_row.pack_start(Gtk.Label(xalign=0, label="Background service"), False, False, 0)
+        self.service_switch = Gtk.Switch()
+        self.service_switch.set_valign(Gtk.Align.CENTER)
+        self.service_switch.set_tooltip_text("Start or stop the background announcement service")
+        self.service_switch.connect("state-set", self.on_service_switch)
+        service_row.pack_end(self.service_switch, False, False, 0)
+        box.pack_start(service_row, False, False, 0)
 
-        buttons = Gtk.Grid(column_homogeneous=True, row_homogeneous=True, column_spacing=10, row_spacing=8)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.announce = Gtk.Button(label="Announce now")
         self.announce.connect("clicked", self.on_announce)
-        restart = Gtk.Button(label="Restart service")
-        restart.connect("clicked", self.on_restart)
         settings = Gtk.Button(label="Settings…")
         settings.connect("clicked", self.on_settings)
-        uninstall = Gtk.Button(label="Uninstall…")
-        uninstall.get_style_context().add_class("destructive-action")
-        uninstall.connect("clicked", self.on_uninstall)
-        buttons.attach(self.announce, 0, 0, 1, 1)
-        buttons.attach(restart, 1, 0, 1, 1)
-        buttons.attach(settings, 0, 1, 1, 1)
-        buttons.attach(uninstall, 1, 1, 1, 1)
-        box.pack_start(buttons, False, False, 0)
+        actions.pack_start(self.announce, True, True, 0)
+        actions.pack_start(settings, True, True, 0)
+        box.pack_start(actions, False, False, 0)
 
         self.note = Gtk.Label(xalign=0)
         self.note.set_line_wrap(True)
         box.pack_start(self.note, False, False, 0)
 
-        footer = Gtk.Label(xalign=0)
-        footer.set_line_wrap(True)
-        shown = str(CONFIG).replace(str(Path.home()), "~", 1)
-        footer.set_markup(f"<small>Version {version()} · settings: {shown}</small>")
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        self.version_label = Gtk.Label(xalign=0)
+        self.version_label.set_line_wrap(True)
+        self.version_label.set_text(f"Version {version()}")
+        self.version_label.set_tooltip_text(f"Settings: {CONFIG}")
+        footer.pack_start(self.version_label, True, True, 0)
+        self.update_button = Gtk.Button(label="Check for updates")
+        self.update_button.get_style_context().add_class("flat")
+        self.update_button.connect("clicked", self.on_update)
+        footer.pack_end(self.update_button, False, False, 0)
+        uninstall = Gtk.Button(label="Uninstall…")
+        uninstall.get_style_context().add_class("destructive-action")
+        uninstall.connect("clicked", self.on_uninstall)
+        footer.pack_end(uninstall, False, False, 0)
         box.pack_start(footer, False, False, 0)
 
+    # --- state ---------------------------------------------------------------
     def refresh(self):
         if self.refreshing:
             return
@@ -176,8 +214,10 @@ class Panel(Gtk.Window):
         if "error" in battery:
             self.percent.set_markup('<span size="xx-large" weight="bold">—</span>')
             self.detail.set_text(f"Battery unavailable: {battery['error']}")
+            self.bar.set_value(0)
         else:
             self.percent.set_markup(f'<span size="xx-large" weight="bold">{battery["percent"]}%</span>')
+            self.bar.set_value(battery["percent"])
             charging = battery["charging"]
             activity = "charging" if charging else ("discharging" if charging is False else "charge state unknown")
             source = "SteamVR level" if battery["source"] == "openvr:hmd" else "kernel reading"
@@ -192,14 +232,16 @@ class Panel(Gtk.Window):
                 self.levels.set_text("Automatic announcements are off.")
         except ValueError as error:
             self.levels.set_text(f"FRAME_HEV_THRESHOLDS is invalid: {error}")
-        if state == "unknown":
-            self.service.set_text("Background service: state unknown — the user session bus is not reachable.")
-            self.service.set_tooltip_text(detail)
-        else:
-            self.service.set_text(f"Background service: {state}.")
-            self.service.set_tooltip_text(None)
+        text, colour = STATE_TEXT.get(state, ("Unknown", "#8b949e"))
+        self.status.set_markup(f'<span foreground="{colour}" size="large">●</span>  <b>{text}</b>')
+        self.status.set_tooltip_text(detail if state == "unknown" else f"Background service: {state}")
+        self.syncing_switch = True
+        self.service_switch.set_active(state == "active")
+        self.syncing_switch = False
+        self.service_switch.set_sensitive(state != "unknown")
         return False
 
+    # --- actions -------------------------------------------------------------
     def on_announce(self, button):
         button.set_sensitive(False)
         self.note.set_text("Announcing the current level…")
@@ -230,44 +272,209 @@ class Panel(Gtk.Window):
         self.refresh()
         return False
 
+    def on_service_switch(self, switch, wanted):
+        if self.syncing_switch:
+            return False
+        switch.set_sensitive(False)
+        self.note.set_text("Starting the background service…" if wanted else "Stopping the background service…")
+
+        def work():
+            problem = run(["systemctl", "--user", "start" if wanted else "stop", UNIT], 30)
+            GLib.idle_add(self.after_service, wanted, problem)
+
+        threading.Thread(target=work, name="frame-hev-panel-service", daemon=True).start()
+        return True
+
+    def after_service(self, wanted, problem):
+        self.syncing_switch = True
+        self.service_switch.set_active(wanted if problem is None else not wanted)
+        self.syncing_switch = False
+        self.service_switch.set_sensitive(True)
+        self.note.set_text("" if problem is None else
+                           f"Could not {'start' if wanted else 'stop'} the service: {problem}")
+        self.refresh()
+        return False
+
+    # --- settings ------------------------------------------------------------
     def on_settings(self, _button):
+        original = read_settings()
+        values = frame_hev.parse_settings(original)
+        try:
+            selected = set(frame_hev.parse_thresholds(values.get("FRAME_HEV_THRESHOLDS",
+                                                                  frame_hev.DEFAULT_THRESHOLDS)))
+        except ValueError:
+            selected = set(frame_hev.parse_thresholds(frame_hev.DEFAULT_THRESHOLDS))
+        levels = sorted(set(THRESHOLD_CHOICES) | selected, reverse=True)
+
         dialog = Gtk.Dialog(title="Frame HEV settings", transient_for=self, modal=True)
         dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
         dialog.set_default_response(Gtk.ResponseType.OK)
-        dialog.set_default_size(560, 360)
-        text = Gtk.TextView()
-        text.set_monospace(True)
-        text.get_buffer().set_text(read_settings())
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scroller.add(text)
-        hint = Gtk.Label(xalign=0)
-        hint.set_text("Changes apply after Restart service. The file is read at startup.")
+        dialog.set_default_size(520, -1)
+        dialog.set_resizable(False)
         area = dialog.get_content_area()
         area.set_spacing(10)
-        area.set_border_width(12)
-        area.pack_start(scroller, True, True, 0)
-        area.pack_start(hint, False, False, 0)
+        area.set_border_width(16)
+
+        def section(title):
+            label = Gtk.Label(xalign=0)
+            label.set_markup(f"<b>{title}</b>")
+            area.pack_start(label, False, False, 0)
+
+        def row(text, widget, suffix=None):
+            holder = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            holder.pack_start(Gtk.Label(xalign=0, label=text), False, False, 0)
+            if suffix is not None:
+                holder.pack_end(suffix, False, False, 0)
+            holder.pack_end(widget, False, False, 0)
+            area.pack_start(holder, False, False, 0)
+
+        section("Automatic announcements")
+        area.pack_start(Gtk.Label(xalign=0, label="Speak as the battery passes:"), False, False, 0)
+        toggles = {}
+        grid = Gtk.Grid(column_homogeneous=True, column_spacing=6, row_spacing=6)
+        for index, level in enumerate(levels):
+            toggle = Gtk.ToggleButton(label=f"{level}%")
+            toggle.set_active(level in selected)
+            grid.attach(toggle, index % 5, index // 5, 1, 1)
+            toggles[level] = toggle
+        area.pack_start(grid, False, False, 0)
+
+        poll = Gtk.ComboBoxText()
+        current_poll = int(number(values, "FRAME_HEV_THRESHOLD_POLL", frame_hev.DEFAULT_THRESHOLD_POLL))
+        for seconds in sorted(set(POLL_CHOICES) | {current_poll}):
+            label = f"{seconds} seconds" if seconds < 60 else f"{seconds // 60} minute" + ("s" if seconds >= 120 else "")
+            poll.append(str(seconds), label)
+        poll.set_active_id(str(current_poll))
+        row("Check every", poll)
+
+        volume = number(values, "FRAME_HEV_VOLUME", 0.65)
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 5)
+        scale.set_value(max(0.0, min(1.0, volume)) * 100)
+        scale.set_digits(0)
+        scale.set_draw_value(False)
+        scale.set_size_request(220, -1)
+        volume_label = Gtk.Label(label=f"{int(scale.get_value())}%")
+        scale.connect("value-changed", lambda widget: volume_label.set_text(f"{int(widget.get_value())}%"))
+        row("Volume", scale, volume_label)
+
+        section("Power button")
+        radios = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        power = Gtk.RadioButton.new_with_label(None, "Double-tap the power button")
+        aux = Gtk.RadioButton.new_with_label_from_widget(power, "Use the button above power instead")
+        (aux if values.get("FRAME_HEV_BUTTON") == "aux" else power).set_active(True)
+        radios.pack_start(power, False, False, 0)
+        radios.pack_start(aux, False, False, 0)
+        area.pack_start(radios, False, False, 0)
+
+        tap = Gtk.SpinButton.new_with_range(150, 800, 10)
+        tap.set_value(number(values, "FRAME_HEV_DOUBLE_TAP_MS", 350))
+        row("Double-tap window", tap, Gtk.Label(label="ms"))
+
+        area.pack_start(Gtk.Label(xalign=0, label="Saving restarts the background service."),
+                        False, False, 0)
         dialog.show_all()
         while True:
             if dialog.run() != Gtk.ResponseType.OK:
                 break
-            start, end = text.get_buffer().get_bounds()
-            content = text.get_buffer().get_text(start, end, False)
-            problem = settings_problem(content)
+            chosen = sorted((level for level, toggle in toggles.items() if toggle.get_active()), reverse=True)
+            replacement = {
+                "FRAME_HEV_VOLUME": f"{scale.get_value() / 100:.2f}",
+                "FRAME_HEV_BUTTON": "aux" if aux.get_active() else "power",
+                "FRAME_HEV_DOUBLE_TAP_MS": str(int(tap.get_value())),
+                "FRAME_HEV_THRESHOLDS": ",".join(map(str, chosen)) or "off",
+                "FRAME_HEV_THRESHOLD_POLL": poll.get_active_id() or str(current_poll),
+            }
+            text = frame_hev.render_settings(original, replacement)
+            problem = frame_hev.settings_problem(text)
             if problem:
                 error_dialog(self, problem)
                 continue
             try:
-                save_settings(content)
+                save_settings(text)
             except OSError as error:
                 error_dialog(self, f"Could not save the settings: {error}")
                 continue
-            self.note.set_text("Settings saved. Restart the service to apply them.")
+            self.note.set_text("Settings saved.")
             break
         dialog.destroy()
         self.refresh()
+        if self.service_switch.get_active():
+            self.on_restart(None)
 
+    # --- updates -------------------------------------------------------------
+    def on_update(self, _button):
+        if self.update_state == "offered":
+            self.apply_update()
+        elif self.update_state in ("idle", "done"):
+            self.check_update()
+
+    def update_repo(self):
+        return configured(read_settings(), "FRAME_HEV_UPDATE_REPO", frame_hev.DEFAULT_UPDATE_REPO)
+
+    def check_update(self):
+        self.update_state = "checking"
+        self.update_button.set_sensitive(False)
+        self.update_button.set_label("Checking…")
+
+        def work():
+            try:
+                result = subprocess.run([sys.executable, str(UPDATER), "--json", "--repo", self.update_repo()],
+                                        capture_output=True, text=True, timeout=60)
+                answer = json.loads(result.stdout or "{}")
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                GLib.idle_add(self.after_check, str(error), None)
+                return
+            problem = None if result.returncode == 0 else (result.stderr.strip() or f"exit {result.returncode}")
+            GLib.idle_add(self.after_check, problem, answer)
+
+        threading.Thread(target=work, name="frame-hev-panel-update-check", daemon=True).start()
+
+    def after_check(self, problem, report):
+        self.update_button.set_sensitive(True)
+        if isinstance(report, dict) and report.get("error"):
+            problem, report = report["error"], None
+        if problem is not None or not isinstance(report, dict):
+            self.update_state = "idle"
+            self.update_button.set_label("Check for updates")
+            self.note.set_text(f"Update check failed: {problem or 'unreadable answer'}")
+            return False
+        if report.get("newer"):
+            self.update_state = "offered"
+            self.update_version = report.get("latest")
+            self.update_button.set_label(f"Update to v{self.update_version}")
+            self.update_button.get_style_context().add_class("suggested-action")
+            self.note.set_text(f"Version {self.update_version} is available.")
+        else:
+            self.update_state = "done"
+            self.update_button.set_label(f"Up to date (v{report.get('installed')})")
+            self.note.set_text("")
+        return False
+
+    def apply_update(self):
+        self.update_state = "updating"
+        self.update_button.set_sensitive(False)
+        self.update_button.set_label("Updating…")
+
+        def work():
+            problem = run([sys.executable, str(UPDATER), "--apply", "--repo", self.update_repo()], 900)
+            GLib.idle_add(self.after_apply, problem)
+
+        threading.Thread(target=work, name="frame-hev-panel-update-apply", daemon=True).start()
+
+    def after_apply(self, problem):
+        self.update_button.set_sensitive(True)
+        if problem is None:
+            self.update_state = "done"
+            self.update_button.set_label("Updated")
+            self.note.set_text("Updated. Reopen the panel to run the new version.")
+        else:
+            self.update_state = "offered"
+            self.update_button.set_label(f"Update to v{self.update_version}")
+            self.note.set_text(f"Update failed: {problem}")
+        self.refresh()
+        return False
+
+    # --- removal -------------------------------------------------------------
     def on_uninstall(self, _button):
         helper = Path.home() / ".local/bin/frame-hev-uninstall"
         if helper.exists():
@@ -297,17 +504,6 @@ class Panel(Gtk.Window):
             Gtk.main_quit()
             return False
         return True
-
-
-def run(command, timeout):
-    """Run one command, returning None on success or a short failure message."""
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.SubprocessError) as error:
-        return str(error)
-    if result.returncode == 0:
-        return None
-    return (result.stderr or result.stdout).strip() or f"exit status {result.returncode}"
 
 
 def main():

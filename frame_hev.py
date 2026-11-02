@@ -31,6 +31,9 @@ EVENT = struct.Struct("llHHi")
 DEFAULT_ASSETS = Path(__file__).resolve().parent / "assets" / "fvox"
 DEFAULT_THRESHOLDS = "20,10,5"
 DEFAULT_THRESHOLD_POLL = 120.0
+# Release repository followed by the panel's update check unless the settings
+# name another one (a fork points this at itself).
+DEFAULT_UPDATE_REPO = "royal32/Frame-HEV-Power-Level-SFX"
 # A level re-arms this many points above itself, so a reading that drifts up
 # and back down does not announce the same level twice.
 THRESHOLD_HYSTERESIS = 2
@@ -139,12 +142,8 @@ def parse_thresholds(text):
     return tuple(sorted(set(levels), reverse=True))
 
 
-def settings_problem(text):
-    """Return why a settings file would stop the service, or None when it is usable.
-
-    Used by the control panel before it saves, so a typo cannot leave a service
-    that fails every restart.
-    """
+def parse_settings(text):
+    """Read a KEY=value environment file into a dict, ignoring comments."""
     values = {}
     for line in text.splitlines():
         stripped = line.strip()
@@ -152,6 +151,35 @@ def settings_problem(text):
             continue
         name, value = stripped.split("=", 1)
         values[name.strip()] = value.strip().strip("\"'")
+    return values
+
+
+def render_settings(original, values):
+    """Rewrite the given keys in place, keeping comments and unrelated settings."""
+    lines = []
+    seen = set()
+    for line in original.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in values:
+                lines.append(f"{key}={values[key]}")
+                seen.add(key)
+                continue
+        lines.append(line)
+    for key, value in values.items():
+        if key not in seen:
+            lines.append(f"{key}={value}")
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def settings_problem(text):
+    """Return why a settings file would stop the service, or None when it is usable.
+
+    Used by the control panel before it saves, so a typo cannot leave a service
+    that fails every restart.
+    """
+    values = parse_settings(text)
     try:
         if "FRAME_HEV_THRESHOLDS" in values:
             parse_thresholds(values["FRAME_HEV_THRESHOLDS"])

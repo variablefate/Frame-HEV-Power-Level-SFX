@@ -704,6 +704,19 @@ class ThresholdTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 self.assertIn(expected, hev.settings_problem(bad))
 
+    def test_settings_rendering_preserves_comments_and_other_keys(self):
+        original = ("# keep me\nFRAME_HEV_VOLUME=0.65\nFRAME_HEV_THRESHOLDS=20,10,5\n"
+                    "FRAME_HEV_UPDATE_REPO=someone/else\n")
+        rendered = hev.render_settings(original, {"FRAME_HEV_THRESHOLDS": "25,15",
+                                                  "FRAME_HEV_THRESHOLD_POLL": "300"})
+        self.assertIn("# keep me", rendered)
+        self.assertIn("FRAME_HEV_VOLUME=0.65", rendered)
+        self.assertIn("FRAME_HEV_UPDATE_REPO=someone/else", rendered)
+        self.assertEqual(rendered.count("FRAME_HEV_THRESHOLDS="), 1)
+        self.assertIn("FRAME_HEV_THRESHOLDS=25,15", rendered)
+        self.assertIn("FRAME_HEV_THRESHOLD_POLL=300", rendered)
+        self.assertIsNone(hev.settings_problem(rendered))
+
     def test_monitor_announces_each_level_once_and_stops(self):
         readings = [50, 20, 19, 19, 10, 5]
         submitted = []
