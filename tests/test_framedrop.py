@@ -73,6 +73,16 @@ class PackageTests(unittest.TestCase):
             for path in artifacts[:-1]:
                 self.assertIn(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n", checksums)
 
+    def test_release_url_override_targets_a_fork(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            files = release.files_for_release()
+            release.build(temp / "dist", "0.1.1", files, framedrop_launcher=self.launcher(temp),
+                          release_url="https://github.com/variablefate/Frame-HEV-Power-Level-SFX/releases/download")
+            manifest = json.loads((temp / "dist/frame-hev.framedrop.json").read_text())
+            self.assertTrue(manifest["files"][0]["url"].startswith(
+                "https://github.com/variablefate/Frame-HEV-Power-Level-SFX/releases/download/v0.1.1/"))
+
     def test_all_artifacts_are_reproducible(self):
         with tempfile.TemporaryDirectory() as temp:
             temp = Path(temp)

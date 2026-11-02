@@ -13,6 +13,69 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 UNIT = "frame-hev.service"
 NATIVE_UNIT = "steamos-powerbuttond.service"
+ICON_SIZES = (48, 64, 128, 256)
+
+
+def gtk_python():
+    """Return an interpreter with GTK3, or None when the menu cannot be shown."""
+    candidates = ["/usr/bin/python3", sys.executable, shutil.which("python3") or ""]
+    seen = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen or not Path(candidate).exists():
+            continue
+        seen.add(candidate)
+        try:
+            probe = subprocess.run([candidate, "-c", "import gi; gi.require_version('Gtk', '3.0')"],
+                                   capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0:
+            return candidate
+    return None
+
+
+def refresh_menu():
+    for tool in ("kbuildsycoca6", "/usr/sbin/kbuildsycoca6", "/usr/bin/kbuildsycoca6",
+                 "kbuildsycoca5", "/usr/sbin/kbuildsycoca5"):
+        resolved = tool if Path(tool).exists() else shutil.which(tool)
+        if resolved:
+            command([resolved, "--noincremental"], check=False, capture=True)
+            return
+
+
+def menu_files(source, home, work, python):
+    """Return the paths, contents, and modes the application menu needs.
+
+    The panel launcher bakes in the interpreter that actually has GTK, because
+    a menu-launched shell has a thinner PATH than a login shell.
+    """
+    app = home / ".local/share/frame-hev"
+    icons = home / ".local/share/icons/hicolor"
+    entry = (source / "desktop/frame-hev.desktop.in").read_text()
+    entry = (entry.replace("@EXEC@", f'"{home / ".local/bin/frame-hev-panel"}"')
+                  .replace("@UNINSTALL@", f'"{home / ".local/bin/frame-hev-uninstall"}"'))
+    files = {
+        home / ".local/bin/frame-hev-panel":
+            (f'#!/bin/sh\n# Frame HEV control panel; interpreter chosen at install time.\n'
+             f'exec "{python}" "{app / "frame_hev_panel.py"}" "$@"\n').encode(),
+        home / ".local/bin/frame-hev-uninstall": (source / "tools/frame-hev-uninstall.sh").read_bytes(),
+        home / ".local/share/applications/frame-hev.desktop": entry.encode(),
+        icons / "scalable/apps/frame-hev.svg": (source / "assets/icon.svg").read_bytes(),
+    }
+    modes = {path: 0o644 for path in files}
+    modes[home / ".local/bin/frame-hev-panel"] = 0o755
+    modes[home / ".local/bin/frame-hev-uninstall"] = 0o755
+    for size in ICON_SIZES:
+        rendered = work / f"frame-hev-{size}.png"
+        try:
+            command(["rsvg-convert", "-w", str(size), "-h", str(size),
+                     str(source / "assets/icon.svg"), "-o", str(rendered)], capture=True)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            continue
+        if rendered.is_file():
+            files[icons / f"{size}x{size}/apps/frame-hev.png"] = rendered.read_bytes()
+            modes[icons / f"{size}x{size}/apps/frame-hev.png"] = 0o644
+    return [(path, files[path], modes[path]) for path in files]
 
 
 def command(args, *, check=True, capture=False):
@@ -98,10 +161,11 @@ def install(source=ROOT, home=None, *, offline=False, source_dir=None):
     home = Path.home() if home is None else Path(home)
     source = Path(source)
     preflight()
-    required = ["frame_hev.py", "assets/manifest.json", "assets/README.md", "README.md",
-                "VERSION", "LICENSE", "tools/fetch_sounds.py", "tools/control.sh",
-                "tools/update.py", "tools/uninstall.sh", "config/environment",
-                "systemd/frame-hev.service"]
+    required = ["frame_hev.py", "frame_hev_panel.py", "assets/icon.svg", "assets/manifest.json",
+                "assets/README.md", "README.md", "VERSION", "LICENSE", "tools/fetch_sounds.py",
+                "tools/control.sh", "tools/uninstall.sh", "tools/update.py",
+                "tools/frame-hev-uninstall.sh",
+                "desktop/frame-hev.desktop.in", "config/environment", "systemd/frame-hev.service"]
     for relative in required:
         if not (source / relative).is_file():
             raise RuntimeError(f"Incomplete download: {relative} is missing. Extract the whole release ZIP.")
@@ -121,9 +185,11 @@ def install(source=ROOT, home=None, *, offline=False, source_dir=None):
     backup = work / "previous"
     preserve_work = False
     moved_new = made_settings = False
+    python = gtk_python()
+    menu, menu_before = [], {}
     try:
         staged.mkdir()
-        for relative in ("frame_hev.py", "VERSION", "LICENSE", "README.md",
+        for relative in ("frame_hev.py", "frame_hev_panel.py", "VERSION", "LICENSE", "README.md",
                          "assets/manifest.json", "assets/README.md"):
             target = staged / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -151,6 +217,11 @@ def install(source=ROOT, home=None, *, offline=False, source_dir=None):
             moved_new = True
             atomic_write(unit, (source / "systemd/frame-hev.service").read_bytes(), 0o644)
             atomic_write(launcher, (source / "tools/control.sh").read_bytes(), 0o755)
+            if python:
+                menu = menu_files(source, home, work, python)
+                for path, data, mode in menu:
+                    menu_before[path] = snapshot(path)
+                    atomic_write(path, data, mode)
             if not settings.exists():
                 atomic_write(settings, (source / "config/environment").read_bytes(), 0o600)
                 made_settings = True
@@ -168,6 +239,8 @@ def install(source=ROOT, home=None, *, offline=False, source_dir=None):
                     backup.replace(app)
                 restore(unit, old_unit)
                 restore(launcher, old_launcher)
+                for path, previous in menu_before.items():
+                    restore(path, previous)
                 if made_settings:
                     settings.unlink(missing_ok=True)
                 systemctl("daemon-reload")
@@ -182,9 +255,21 @@ def install(source=ROOT, home=None, *, offline=False, source_dir=None):
         if not preserve_work:
             shutil.rmtree(work)
     version = (app / "VERSION").read_text().strip()
+    if menu:
+        refresh_menu()
+        updater = shutil.which("gtk-update-icon-cache") or next(
+            (path for path in ("/usr/sbin/gtk-update-icon-cache", "/usr/bin/gtk-update-icon-cache")
+             if Path(path).exists()), None)
+        if updater:
+            command([updater, "-f", "-t", str(home / ".local/share/icons/hicolor")],
+                    check=False, capture=True)
     print(f"\nFrame HEV {version} is installed and enabled at startup.")
     print("Double-tap power while awake to hear the battery level.")
     print("Single press still sleeps; hold still opens the power menu.")
+    if menu:
+        print("Menu:      Applications → Frame HEV (right-click for Uninstall)")
+    else:
+        print("Menu:      skipped - the GTK3 Python bindings were not found")
     print("Try now:   ~/.local/bin/frame-hev announce")
     print("Settings: ~/.config/frame-hev/environment")
     print("Remove:   ~/.local/bin/frame-hev uninstall")

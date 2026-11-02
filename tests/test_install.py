@@ -143,8 +143,9 @@ class InstallTests(unittest.TestCase):
         return (home / ".local/share/frame-hev", home / ".config/systemd/user/frame-hev.service",
                 home / ".local/bin/frame-hev", home / ".config/frame-hev/environment")
 
-    def invoke(self, home, host):
+    def invoke(self, home, host, python: "str | None" = "/usr/bin/python3"):
         with (mock.patch.object(installer, "preflight"),
+              mock.patch.object(installer, "gtk_python", return_value=python),
               mock.patch.object(installer, "command", side_effect=host.command),
               mock.patch.object(installer, "systemctl", side_effect=host.systemctl),
               contextlib.redirect_stdout(io.StringIO()),
@@ -253,6 +254,125 @@ class InstallTests(unittest.TestCase):
             self.assertFalse(host.enabled)
             self.assert_clean_stage(home)
             self.assert_native_untouched(host)
+
+    def test_fresh_install_adds_the_menu_panel_and_uninstall_action(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home, host = Path(temp), FakeHost()
+            self.invoke(home, host)
+            desktop = home / ".local/share/applications/frame-hev.desktop"
+            panel = home / ".local/bin/frame-hev-panel"
+            helper = home / ".local/bin/frame-hev-uninstall"
+            entry = desktop.read_text()
+            self.assertIn(f'Exec="{panel}"', entry)
+            self.assertIn(f'Exec="{helper}"', entry)
+            self.assertIn("Actions=uninstall;", entry)
+            self.assertIn("Uninstall Frame HEV…", entry)
+            self.assertEqual(panel.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(helper.stat().st_mode & 0o777, 0o755)
+            self.assertIn('"/usr/bin/python3"', panel.read_text())
+            self.assertTrue((home / ".local/share/frame-hev/frame_hev_panel.py").is_file())
+            self.assertTrue((home / ".local/share/frame-hev/update.py").is_file())
+            self.assertTrue((home / ".local/share/icons/hicolor/scalable/apps/frame-hev.svg").is_file())
+
+    def test_install_without_gtk_keeps_the_service_and_skips_the_menu(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home, host = Path(temp), FakeHost()
+            self.invoke(home, host, python=None)
+            self.assertFalse((home / ".local/share/applications/frame-hev.desktop").exists())
+            self.assertFalse((home / ".local/bin/frame-hev-panel").exists())
+            self.assertTrue((home / ".local/bin/frame-hev").is_file())
+            self.assertTrue(host.active)
+
+
+class UninstallTests(unittest.TestCase):
+    def make_home(self, home):
+        paths = [
+            home / ".local/share/frame-hev/frame_hev.py",
+            home / ".local/share/frame-hev/frame_hev_panel.py",
+            home / ".config/systemd/user/frame-hev.service",
+            home / ".local/bin/frame-hev",
+            home / ".local/bin/frame-hev-panel",
+            home / ".local/bin/frame-hev-uninstall",
+            home / ".local/share/applications/frame-hev.desktop",
+            home / ".local/share/icons/hicolor/48x48/apps/frame-hev.png",
+            home / ".local/share/icons/hicolor/scalable/apps/frame-hev.svg",
+            home / ".config/frame-hev/environment",
+            home / ".cache/frame-hev/10-abc.wav",
+            home / ".cache/frame-hev-uninstall.log",
+        ]
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x")
+        stubs, log = home / "stubs", home / "stub.log"
+        stubs.mkdir()
+        for name in ("systemctl", "kbuildsycoca6", "gtk-update-icon-cache", "pgrep"):
+            stub = stubs / name
+            stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{log}"\nexit 0\n')
+            stub.chmod(0o755)
+        return paths, stubs, log
+
+    def run_uninstaller(self, home, stubs, *arguments):
+        environment = {"HOME": str(home), "PATH": f"{stubs}:/usr/bin:/bin",
+                       "XDG_CACHE_HOME": str(home / ".cache")}
+        return subprocess.run(["bash", str(ROOT / "tools/uninstall.sh"), *arguments],
+                              capture_output=True, text=True, env=environment)
+
+    def test_dry_run_lists_targets_without_removing_anything(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            paths, stubs, _log = self.make_home(home)
+            result = self.run_uninstaller(home, stubs, "--dry-run", "--purge")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("will be removed", result.stdout)
+            self.assertIn(str(home / ".config/frame-hev"), result.stdout)
+            self.assertTrue(all(path.exists() for path in paths))
+            without_purge = self.run_uninstaller(home, stubs, "--dry-run")
+            self.assertNotIn(str(home / ".config/frame-hev"), without_purge.stdout)
+
+    def test_purge_removes_every_installed_surface_and_refreshes_the_menu(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            paths, stubs, log = self.make_home(home)
+            result = self.run_uninstaller(home, stubs, "--purge")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for path in paths:
+                self.assertFalse(path.exists(), str(path))
+            self.assertFalse((home / ".local/share/frame-hev").exists())
+            self.assertFalse((home / ".config/frame-hev").exists())
+            self.assertFalse((home / ".cache/frame-hev").exists())
+            calls = log.read_text()
+            self.assertIn("kbuildsycoca6 --noincremental", calls)
+            self.assertIn("gtk-update-icon-cache", calls)
+            self.assertIn("systemctl --user stop frame-hev.service", calls)
+
+    def test_without_purge_keeps_settings_and_cached_audio(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            _paths, stubs, _log = self.make_home(home)
+            result = self.run_uninstaller(home, stubs)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((home / ".config/frame-hev/environment").is_file())
+            self.assertTrue((home / ".cache/frame-hev/10-abc.wav").is_file())
+            self.assertFalse((home / ".local/share/frame-hev").exists())
+
+    def test_desktop_shortcut_is_removed_only_when_it_is_ours(self):
+        for link in (True, False):
+            with self.subTest(symlink=link), tempfile.TemporaryDirectory() as temp:
+                home = Path(temp)
+                _paths, stubs, _log = self.make_home(home)
+                desktop = home / "Desktop"
+                desktop.mkdir()
+                shortcut = desktop / "frame-hev.desktop"
+                if link:
+                    shortcut.symlink_to(home / ".local/share/applications/frame-hev.desktop")
+                else:
+                    shortcut.write_text("a shortcut the user made")
+                result = self.run_uninstaller(home, stubs, "--purge")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if link:
+                    self.assertFalse(shortcut.is_symlink())
+                else:
+                    self.assertTrue(shortcut.is_file())
 
 
 if __name__ == "__main__":

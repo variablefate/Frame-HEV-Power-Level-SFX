@@ -192,7 +192,7 @@ class BatteryTests(unittest.TestCase):
             root = Path(temp)
             self.battery(root, "controller", 100, "Device")
             system = self.battery(root, "max1720x_bat_7-36", 63, "System")
-            self.assertEqual(hev.read_battery(root, source="kernel"), (system, 63))
+            self.assertEqual(hev.read_battery(root), (system, 63))
 
     def test_invalid_and_ambiguous_batteries_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -200,16 +200,16 @@ class BatteryTests(unittest.TestCase):
             self.battery(root, "bad", 101)
             self.battery(root, "adapter", 10, kind="Mains")
             with self.assertRaises(RuntimeError):
-                hev.read_battery(root, source="kernel")
+                hev.read_battery(root)
             self.battery(root, "system1", 44)
             self.battery(root, "system2", 55)
             with self.assertRaises(RuntimeError):
-                hev.read_battery(root, source="kernel")
+                hev.read_battery(root)
 
 
 class SteamVRBatteryTests(unittest.TestCase):
     def setUp(self):
-        # These tests exercise SteamVR's gauge; ask for it explicitly.
+        # These tests exercise SteamVR's gauge; the default is the kernel gauge.
         patcher = mock.patch.dict(os.environ, {"FRAME_HEV_BATTERY_SOURCE": "steamvr"})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -636,6 +636,31 @@ class RuntimeSafetyTests(unittest.TestCase):
                 monitor.close.assert_called_once()
 
 
+class SessionTests(unittest.TestCase):
+    def test_stale_runtime_directory_is_repaired(self):
+        """A menu launch can carry XDG_RUNTIME_DIR with no bus socket."""
+        with tempfile.TemporaryDirectory() as temporary:
+            fallback = Path(temporary) / "runtime"
+            fallback.mkdir()
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                server.bind(str(fallback / "bus"))
+                with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": temporary,
+                                                  "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent"},
+                                     clear=False):
+                    self.assertTrue(hev.session_environment(fallback=fallback))
+                    self.assertEqual(os.environ["XDG_RUNTIME_DIR"], str(fallback))
+                    self.assertEqual(os.environ["DBUS_SESSION_BUS_ADDRESS"],
+                                     f"unix:path={fallback / 'bus'}")
+            finally:
+                server.close()
+
+    def test_missing_bus_is_reported_instead_of_crashing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": temporary}, clear=False):
+                self.assertFalse(hev.session_environment(fallback=Path(temporary) / "absent"))
+
+
 class ThresholdTests(unittest.TestCase):
     def test_config_parsing_normalises_and_disables(self):
         self.assertEqual(hev.parse_thresholds("20,10,5"), (20, 10, 5))
@@ -721,6 +746,34 @@ class ThresholdTests(unittest.TestCase):
             (battery / "status").unlink()
             self.assertIsNone(hev.read_charging(root))
         self.assertIsNone(hev.read_charging(Path("/nonexistent/power_supply")))
+
+    def test_settings_validation_matches_what_the_service_accepts(self):
+        good = ("FRAME_HEV_BUTTON=power\nFRAME_HEV_VOLUME=0.65\n"
+                "FRAME_HEV_DOUBLE_TAP_MS=350\nFRAME_HEV_THRESHOLDS=20,10,5\n"
+                "FRAME_HEV_THRESHOLD_POLL=120\n")
+        self.assertIsNone(hev.settings_problem(good))
+        self.assertIsNone(hev.settings_problem("# nothing but a comment\n"))
+        self.assertIsNone(hev.settings_problem("FRAME_HEV_BATTERY_SOURCE=lowest\n"))
+        for bad, expected in (("FRAME_HEV_THRESHOLDS=100\n", "1-99"),
+                              ("FRAME_HEV_VOLUME=1.5\n", "FRAME_HEV_VOLUME"),
+                              ("FRAME_HEV_THRESHOLD_POLL=2\n", "at least 5"),
+                              ("FRAME_HEV_BUTTON=volume\n", "power or aux"),
+                              ("FRAME_HEV_BATTERY_SOURCE=upower\n", "kernel, steamvr, auto, or lowest")):
+            with self.subTest(bad=bad):
+                self.assertIn(expected, hev.settings_problem(bad))
+
+    def test_settings_rendering_preserves_comments_and_other_keys(self):
+        original = ("# keep me\nFRAME_HEV_VOLUME=0.65\nFRAME_HEV_THRESHOLDS=20,10,5\n"
+                    "FRAME_HEV_UPDATE_REPO=someone/else\n")
+        rendered = hev.render_settings(original, {"FRAME_HEV_THRESHOLDS": "25,15",
+                                                  "FRAME_HEV_THRESHOLD_POLL": "300"})
+        self.assertIn("# keep me", rendered)
+        self.assertIn("FRAME_HEV_VOLUME=0.65", rendered)
+        self.assertIn("FRAME_HEV_UPDATE_REPO=someone/else", rendered)
+        self.assertEqual(rendered.count("FRAME_HEV_THRESHOLDS="), 1)
+        self.assertIn("FRAME_HEV_THRESHOLDS=25,15", rendered)
+        self.assertIn("FRAME_HEV_THRESHOLD_POLL=300", rendered)
+        self.assertIsNone(hev.settings_problem(rendered))
 
     def test_monitor_announces_each_level_once_and_stops(self):
         readings = [50, 20, 19, 19, 10, 5]

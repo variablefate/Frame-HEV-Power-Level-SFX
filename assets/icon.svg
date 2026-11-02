@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Frame HEV: a battery holding the letters HEV, readable at 48 px. -->
+  <rect width="256" height="256" rx="52" fill="#11151a"/>
+  <rect x="30" y="80" width="170" height="96" rx="26" fill="none" stroke="#ff7a1a" stroke-width="12"/>
+  <rect x="206" y="106" width="18" height="44" rx="8" fill="#ff7a1a"/>
+  <g fill="none" stroke="#ff7a1a" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <!-- H -->
+    <path d="M57 98 V158 M57 128 H83 M83 98 V158"/>
+    <!-- E -->
+    <path d="M99 98 V158 M99 98 H125 M99 128 H119 M99 158 H125"/>
+    <!-- V -->
+    <path d="M141 98 L157 158 L173 98"/>
+  </g>
+</svg>
