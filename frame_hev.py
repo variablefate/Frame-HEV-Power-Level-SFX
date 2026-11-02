@@ -343,7 +343,10 @@ class ThresholdWatcher:
             raise ValueError("battery percentage must be between 0 and 100")
         if not self.primed:
             self.primed = True
-            self.armed = {level for level in self.thresholds if percent > level}
+            # Arm levels at or below this reading: a level the battery is
+            # exactly on has not been crossed yet, so a further drop should
+            # announce it. Levels already below the reading stay quiet.
+            self.armed = {level for level in self.thresholds if percent >= level}
             return None
         crossed = [level for level in self.thresholds if level in self.armed and percent <= level]
         if charging:

@@ -716,6 +716,18 @@ class ThresholdTests(unittest.TestCase):
         self.assertIsNone(watcher.update(21))
         self.assertIsNone(watcher.update(20))
 
+    def test_starting_exactly_at_a_level_announces_the_next_drop(self):
+        watcher = hev.ThresholdWatcher((50,))
+        self.assertIsNone(watcher.update(50))
+        self.assertEqual(watcher.update(49), 50)
+
+    def test_starting_below_a_level_stays_quiet_until_charged_above_it(self):
+        watcher = hev.ThresholdWatcher((50,))
+        watcher.update(48)
+        self.assertIsNone(watcher.update(47))
+        watcher.update(52)
+        self.assertEqual(watcher.update(50), 50)
+
     def test_charging_status_reads_the_same_battery(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "power_supply"
