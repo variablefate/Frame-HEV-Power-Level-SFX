@@ -37,7 +37,7 @@ STATE_TEXT = {"active": ("Running", "#3ba55c"), "activating": ("Starting", "#d9a
               "deactivating": ("Stopping", "#d9a441"), "failed": ("Failed", "#d9534f"),
               "inactive": ("Paused", "#8b949e"), "reloading": ("Reloading", "#d9a441"),
               "refreshing": ("Refreshing", "#d9a441"), "maintenance": ("Maintenance", "#d9a441")}
-THRESHOLD_CHOICES = (25, 20, 15, 10, 5)
+THRESHOLD_CHOICES = (50, 25, 20, 15, 10, 5)
 POLL_CHOICES = (30, 60, 120, 300, 600)
 
 
@@ -346,7 +346,7 @@ class Panel(Gtk.Window):
         for index, level in enumerate(levels):
             toggle = Gtk.ToggleButton(label=f"{level}%")
             toggle.set_active(level in selected)
-            grid.attach(toggle, index % 5, index // 5, 1, 1)
+            grid.attach(toggle, index % 6, index // 6, 1, 1)
             toggles[level] = toggle
         area.pack_start(grid, False, False, 0)
 
