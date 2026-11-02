@@ -35,10 +35,6 @@ DEFAULT_THRESHOLD_POLL = 120.0
 # one the headset shuts down on; SteamVR's runs a few points higher (50 vs 46
 # observed), which made low-battery warnings late.
 DEFAULT_BATTERY_SOURCE = "kernel"
-# Release repository followed by the panel's update check unless the settings
-# name another one (a fork points this at itself). Keep in sync with
-# tools/update.py; tests/test_update.py enforces the pair.
-DEFAULT_UPDATE_REPO = "royal32/Frame-HEV-Power-Level-SFX"
 # A level re-arms this many points above itself, so a reading that drifts up
 # and back down does not announce the same level twice.
 THRESHOLD_HYSTERESIS = 2
@@ -249,7 +245,8 @@ def read_battery(root=None, source=None):
     gauge that governs shutdown, ``steamvr`` to prefer SteamVR's displayed
     level, ``auto`` to prefer SteamVR and fall back to the kernel, or
     ``lowest`` to read both and take the lower one so warnings are never late.
-    SteamVR reads several points high, so the kernel is the default.
+    SteamVR reads several points high, so ``kernel`` or ``lowest`` is the
+    honest choice for low-battery warnings.
     """
     if root is not None:
         return read_sysfs_battery(root)

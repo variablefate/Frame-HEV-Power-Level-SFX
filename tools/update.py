@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-DEFAULT_REPO = "royal32/Frame-HEV-Power-Level-SFX"  # sync with frame_hev.DEFAULT_UPDATE_REPO
+DEFAULT_REPO = "royal32/Frame-HEV-Power-Level-SFX"
 SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 API = "https://github.com/{repo}/releases/latest/download/{name}"
 ZIP_NAME = re.compile(r"^frame-hev-(\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?)\.zip$")

@@ -439,7 +439,13 @@ class Panel(Gtk.Window):
             self.check_update()
 
     def update_repo(self):
-        return configured(read_settings(), "FRAME_HEV_UPDATE_REPO", frame_hev.DEFAULT_UPDATE_REPO)
+        return configured(read_settings(), "FRAME_HEV_UPDATE_REPO", "")
+
+    def update_args(self, *extra):
+        """Leave --repo off unless the settings name one, so update.py's default stands."""
+        args = [sys.executable, str(UPDATER), *extra]
+        repo = self.update_repo()
+        return [*args, "--repo", repo] if repo else args
 
     def check_update(self):
         self.update_state = "checking"
@@ -448,7 +454,7 @@ class Panel(Gtk.Window):
 
         def work():
             try:
-                result = subprocess.run([sys.executable, str(UPDATER), "--json", "--repo", self.update_repo()],
+                result = subprocess.run(self.update_args("--json"),
                                         capture_output=True, text=True, timeout=60)
                 answer = json.loads(result.stdout or "{}")
             except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -486,7 +492,7 @@ class Panel(Gtk.Window):
         self.update_button.set_label("Updating…")
 
         def work():
-            problem = run([sys.executable, str(UPDATER), "--apply", "--repo", self.update_repo()], 900)
+            problem = run(self.update_args("--apply"), 900)
             GLib.idle_add(self.after_apply, problem)
 
         threading.Thread(target=work, name="frame-hev-panel-update-apply", daemon=True).start()

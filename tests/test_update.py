@@ -16,11 +16,6 @@ assert SPEC and SPEC.loader
 update = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(update)
 
-HEV_SPEC = importlib.util.spec_from_file_location("frame_hev_for_update", ROOT / "frame_hev.py")
-assert HEV_SPEC and HEV_SPEC.loader
-frame_hev = importlib.util.module_from_spec(HEV_SPEC)
-HEV_SPEC.loader.exec_module(frame_hev)
-
 
 class VersionTests(unittest.TestCase):
     def test_newer_and_prerelease_ordering(self):
@@ -60,9 +55,6 @@ class VersionTests(unittest.TestCase):
     def test_installed_version_reads_the_repository_root_from_tools(self):
         self.assertEqual(update.installed_version(ROOT / "tools"),
                          (ROOT / "VERSION").read_text().strip())
-
-    def test_default_repository_matches_the_runtime_constant(self):
-        self.assertEqual(update.DEFAULT_REPO, frame_hev.DEFAULT_UPDATE_REPO)
 
 
 class ExtractionTests(unittest.TestCase):
