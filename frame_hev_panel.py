@@ -354,7 +354,8 @@ class Panel(Gtk.Window):
         poll = Gtk.ComboBoxText()
         current_poll = int(number(values, "FRAME_HEV_THRESHOLD_POLL", frame_hev.DEFAULT_THRESHOLD_POLL))
         for seconds in sorted(set(POLL_CHOICES) | {current_poll}):
-            label = f"{seconds} seconds" if seconds < 60 else f"{seconds // 60} minute" + ("s" if seconds >= 120 else "")
+            label = (f"{seconds} seconds" if seconds < 60 else
+                     f"{seconds // 60} minute" + ("s" if seconds >= 120 else ""))
             poll.append(str(seconds), label)
         poll.set_active_id(str(current_poll))
         row("Check every", poll)

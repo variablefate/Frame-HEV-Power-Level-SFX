@@ -196,7 +196,8 @@ def settings_problem(text):
                 return "FRAME_HEV_THRESHOLD_POLL must be at least 5 seconds."
         if "FRAME_HEV_BUTTON" in values and values["FRAME_HEV_BUTTON"] not in ("power", "aux"):
             return "FRAME_HEV_BUTTON must be power or aux."
-        if "FRAME_HEV_BATTERY_SOURCE" in values and values["FRAME_HEV_BATTERY_SOURCE"] not in ("kernel", "steamvr", "auto", "lowest"):
+        source = values.get("FRAME_HEV_BATTERY_SOURCE")
+        if source is not None and source not in ("kernel", "steamvr", "auto", "lowest"):
             return "FRAME_HEV_BATTERY_SOURCE must be kernel, steamvr, auto, or lowest."
     except ValueError as error:
         message = str(error)
@@ -254,7 +255,12 @@ def read_battery(root=None, source=None):
     source = (source or os.environ.get("FRAME_HEV_BATTERY_SOURCE", DEFAULT_BATTERY_SOURCE)).lower()
     if source not in ("kernel", "steamvr", "auto", "lowest"):
         raise ValueError(f"unknown battery source {source!r}")
-    kernel = read_sysfs_battery(Path("/sys/class/power_supply")) if source == "lowest" else None
+    kernel = None
+    if source == "lowest":
+        try:
+            kernel = read_sysfs_battery(Path("/sys/class/power_supply"))
+        except (OSError, RuntimeError) as error:
+            LOG.warning("kernel battery unavailable (%s); using SteamVR alone", error)
     if source != "kernel":
         try:
             # Keep native API failures and hangs away from the process holding

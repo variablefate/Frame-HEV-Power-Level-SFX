@@ -12,8 +12,14 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("frame_hev_update", ROOT / "tools/update.py")
+assert SPEC and SPEC.loader
 update = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(update)
+
+HEV_SPEC = importlib.util.spec_from_file_location("frame_hev_for_update", ROOT / "frame_hev.py")
+assert HEV_SPEC and HEV_SPEC.loader
+frame_hev = importlib.util.module_from_spec(HEV_SPEC)
+HEV_SPEC.loader.exec_module(frame_hev)
 
 
 class VersionTests(unittest.TestCase):
@@ -32,6 +38,13 @@ class VersionTests(unittest.TestCase):
         self.assertIsNone(update.checksum_from(text, "frame-hev-9.9.9.zip"))
         self.assertIsNone(update.checksum_from("not-a-checksum  frame-hev-0.2.0.zip\n",
                                                "frame-hev-0.2.0.zip"))
+
+    def test_installed_version_reads_the_repository_root_from_tools(self):
+        self.assertEqual(update.installed_version(ROOT / "tools"),
+                         (ROOT / "VERSION").read_text().strip())
+
+    def test_default_repository_matches_the_runtime_constant(self):
+        self.assertEqual(update.DEFAULT_REPO, frame_hev.DEFAULT_UPDATE_REPO)
 
 
 class ExtractionTests(unittest.TestCase):
@@ -89,6 +102,16 @@ class ReportTests(unittest.TestCase):
                 code = update.main(["--json"])
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out.getvalue())["error"], "no releases")
+
+    def test_json_apply_stays_a_single_document(self):
+        with (mock.patch.object(update, "latest_release", return_value="9.9.9"),
+              mock.patch.object(update, "installed_version", return_value="0.2.0"),
+              mock.patch.object(update, "apply_update", return_value="9.9.9")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = update.main(["--json", "--apply"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue())["applied"], "9.9.9")
 
 
 if __name__ == "__main__":

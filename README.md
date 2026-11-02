@@ -303,9 +303,11 @@ switches on a virtual button. These checks do not generate physical power events
 The release builder creates the source ZIP, tar.gz, and `dist/SHA256SUMS`, using
 the version in `VERSION`. To also build the FrameDrop ZIP and manifest, pass
 `--framedrop-launcher /path/to/frame-hev-setup`; see
-[FrameDrop release instructions](docs/framedrop.md). The builder uses an
-explicit file list and excludes audio, credentials, local agent settings, and
-Git history.
+[FrameDrop release instructions](docs/framedrop.md). Pass `--release-url` to
+write the manifest for a fork's releases; the default is this repository, and
+`docs/install.html` follows its own GitHub Pages origin, so a fork's page
+installs the fork's build. The builder uses an explicit file list and excludes
+audio, credentials, local agent settings, and Git history.
 
 [Frame development notes](docs/frame-development.md) include remote UI
 inspection, screenshots, and click automation.

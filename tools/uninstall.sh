@@ -59,7 +59,10 @@ add "$HOME/.local/bin/frame-hev"
 add "$HOME/.local/bin/frame-hev-panel"
 add "$HOME/.local/bin/frame-hev-uninstall"
 add "$APPS/frame-hev.desktop"
-add "$HOME/Desktop/frame-hev.desktop"
+if [[ -L "$HOME/Desktop/frame-hev.desktop" ]]; then
+    # Only our shortcut (a symlink to the menu entry); never a user's own file.
+    targets+=("$HOME/Desktop/frame-hev.desktop")
+fi
 for size in 48x48 64x64 128x128 256x256 scalable; do
     for ext in png svg; do add "$ICONS/$size/apps/frame-hev.$ext"; done
 done
@@ -94,7 +97,10 @@ rm -f -- "$HOME/.config/systemd/user/frame-hev.service" \
 systemctl --user daemon-reload 2>/dev/null || true
 systemctl --user reset-failed frame-hev.service 2>/dev/null || true
 rm -rf -- "$HOME/.local/share/frame-hev"
-rm -f -- "$APPS/frame-hev.desktop" "$HOME/Desktop/frame-hev.desktop" "$CACHE/frame-hev-uninstall.log"
+rm -f -- "$APPS/frame-hev.desktop" "$CACHE/frame-hev-uninstall.log"
+if [[ -L "$HOME/Desktop/frame-hev.desktop" ]]; then
+    rm -f -- "$HOME/Desktop/frame-hev.desktop"
+fi
 for size in 48x48 64x64 128x128 256x256 scalable; do
     rm -f -- "$ICONS/$size/apps/frame-hev.png" "$ICONS/$size/apps/frame-hev.svg"
 done

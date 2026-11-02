@@ -47,11 +47,16 @@ def version_key(text):
 
 
 def installed_version(root=None):
-    try:
-        text = ((Path(root) if root else HERE) / "VERSION").read_text().strip()
-    except OSError:
-        return "0.0.0"
-    return text or "0.0.0"
+    """Read VERSION beside the updater, or one level up when run from tools/."""
+    base = Path(root) if root else HERE
+    for candidate in (base, base.parent):
+        try:
+            text = (candidate / "VERSION").read_text().strip()
+        except OSError:
+            continue
+        if text:
+            return text
+    return "0.0.0"
 
 
 def request(url):
@@ -160,21 +165,18 @@ def main(argv=None):
         latest = latest_release(args.repo)
         newer = version_key(latest) > version_key(installed)
         report.update(latest=latest, newer=newer)
+        if not args.json:
+            print(f"installed  v{installed}")
+            print(f"latest     v{latest}")
+            print(f"update available: v{installed} -> v{latest}" if newer else "already up to date")
+        if newer and args.apply:
+            report["applied"] = apply_update(args.repo, latest)
+            if not args.json:
+                print(f"updated to v{report['applied']}")
         if args.json:
             print(json.dumps(report))
-        elif newer:
-            print(f"installed  v{installed}")
-            print(f"latest     v{latest}")
-            print(f"update available: v{installed} -> v{latest}")
-        else:
-            print(f"installed  v{installed}")
-            print(f"latest     v{latest}")
-            print("already up to date")
-        if newer and args.apply:
-            version = apply_update(args.repo, latest)
-            print(f"updated to v{version}")
         return 0
-    except (OSError, urllib.error.URLError, UpdateError, zipfile.BadZipFile) as error:
+    except (OSError, ValueError, urllib.error.URLError, UpdateError, zipfile.BadZipFile) as error:
         if args.json:
             print(json.dumps({**report, "error": str(error)}))
         else:

@@ -355,6 +355,25 @@ class UninstallTests(unittest.TestCase):
             self.assertTrue((home / ".cache/frame-hev/10-abc.wav").is_file())
             self.assertFalse((home / ".local/share/frame-hev").exists())
 
+    def test_desktop_shortcut_is_removed_only_when_it_is_ours(self):
+        for link in (True, False):
+            with self.subTest(symlink=link), tempfile.TemporaryDirectory() as temp:
+                home = Path(temp)
+                _paths, stubs, _log = self.make_home(home)
+                desktop = home / "Desktop"
+                desktop.mkdir()
+                shortcut = desktop / "frame-hev.desktop"
+                if link:
+                    shortcut.symlink_to(home / ".local/share/applications/frame-hev.desktop")
+                else:
+                    shortcut.write_text("a shortcut the user made")
+                result = self.run_uninstaller(home, stubs, "--purge")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if link:
+                    self.assertFalse(shortcut.is_symlink())
+                else:
+                    self.assertTrue(shortcut.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
