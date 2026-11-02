@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import subprocess
 from types import SimpleNamespace
+import time
 import unittest
 from unittest import mock
 import wave
@@ -384,7 +385,8 @@ class RuntimeSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             args = SimpleNamespace(button=button, dry_run=True, device=None, device_name=None,
                                    lock_file=Path(temporary)/"runtime.lock", double_tap_ms=350,
-                                   long_hold_ms=1000, debounce_ms=25, resume_guard_ms=1000)
+                                   long_hold_ms=1000, debounce_ms=25, resume_guard_ms=1000,
+                                   thresholds=(), threshold_poll=120)
             with (mock.patch.object(hev.Path, "home", return_value=Path(temporary)),
                   mock.patch.object(hev, "resolve_device", return_value={"path":"fake", "name":"test"}),
                   mock.patch.object(hev, "get_bits", return_value=set()),
@@ -471,7 +473,8 @@ class RuntimeSafetyTests(unittest.TestCase):
         for subscription_fails in (True, False):
             with self.subTest(subscription_fails=subscription_fails), tempfile.TemporaryDirectory() as temporary:
                 args = SimpleNamespace(button="power", dry_run=True, device=None, device_name=None,
-                                       lock_file=Path(temporary)/"runtime.lock")
+                                       lock_file=Path(temporary)/"runtime.lock",
+                                       thresholds=(), threshold_poll=120)
                 monitor = mock.Mock()
                 with (mock.patch.object(hev.Path, "home", return_value=Path(temporary)),
                       mock.patch.object(hev, "resolve_device", return_value={"path":"fake", "name":"test"}),
@@ -551,7 +554,7 @@ class RuntimeSafetyTests(unittest.TestCase):
             args = SimpleNamespace(button="power", dry_run=True, device=None,
                                    device_name=None, lock_file=Path(temp) / "runtime.lock",
                                    double_tap_ms=350, long_hold_ms=1000, debounce_ms=25,
-                                   resume_guard_ms=1000)
+                                   resume_guard_ms=1000, thresholds=(), threshold_poll=120)
             wake_events = b"".join(hev.EVENT.pack(seconds, micros, hev.EV_KEY, hev.KEY_POWER, value)
                                    for seconds, micros, value in [(60, 0, 1), (60, 60000, 0),
                                                                   (60, 200000, 1), (60, 260000, 0)])
@@ -585,6 +588,116 @@ class RuntimeSafetyTests(unittest.TestCase):
                 self.assertEqual(close.call_args_list, [mock.call(99), mock.call(97), mock.call(98)])
                 runner.close.assert_called_once()
                 monitor.close.assert_called_once()
+
+
+class ThresholdTests(unittest.TestCase):
+    def test_config_parsing_normalises_and_disables(self):
+        self.assertEqual(hev.parse_thresholds("20,10,5"), (20, 10, 5))
+        self.assertEqual(hev.parse_thresholds(" 5, 20  10 "), (20, 10, 5))
+        self.assertEqual(hev.parse_thresholds("20,20"), (20,))
+        self.assertEqual(hev.parse_thresholds("off"), ())
+        self.assertEqual(hev.parse_thresholds(""), ())
+        for bad in ("0", "100", "-5", "twenty", "20,,x"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                hev.parse_thresholds(bad)
+
+    def test_levels_stay_silent_until_crossed_and_fire_once(self):
+        watcher = hev.ThresholdWatcher((20, 10, 5))
+        self.assertIsNone(watcher.update(25))
+        self.assertEqual(watcher.armed, {20, 10, 5})
+        self.assertEqual(watcher.update(20), 20)
+        self.assertIsNone(watcher.update(19))
+        self.assertIsNone(watcher.update(19))
+        self.assertEqual(watcher.update(10), 10)
+        self.assertEqual(watcher.update(5), 5)
+        self.assertIsNone(watcher.update(4))
+        self.assertIsNone(watcher.update(0))
+
+    def test_restart_on_a_low_battery_stays_quiet(self):
+        watcher = hev.ThresholdWatcher((20, 10, 5))
+        self.assertIsNone(watcher.update(8))
+        self.assertEqual(watcher.armed, {5})
+        self.assertEqual(watcher.update(5), 5)
+
+    def test_charging_crossings_are_silent_and_a_recharge_rearms(self):
+        watcher = hev.ThresholdWatcher((20,))
+        self.assertIsNone(watcher.update(25))
+        self.assertIsNone(watcher.update(20, charging=True))
+        self.assertIsNone(watcher.update(21))
+        self.assertIsNone(watcher.update(22))
+        self.assertEqual(watcher.update(20), 20)
+
+    def test_a_level_crossed_while_charging_still_fires_after_unplugging(self):
+        watcher = hev.ThresholdWatcher((20,))
+        watcher.update(25)
+        self.assertIsNone(watcher.update(19, charging=True))
+        self.assertEqual(watcher.armed, {20})
+        self.assertEqual(watcher.update(19), 20)
+
+    def test_one_poll_that_passes_several_levels_announces_the_lowest(self):
+        watcher = hev.ThresholdWatcher((20, 10, 5))
+        watcher.update(25)
+        self.assertEqual(watcher.update(4), 5)
+        self.assertEqual(watcher.armed, set())
+
+    def test_hysteresis_blocks_a_drifting_reading_from_repeating(self):
+        watcher = hev.ThresholdWatcher((20,))
+        watcher.update(21)
+        self.assertEqual(watcher.update(20), 20)
+        self.assertIsNone(watcher.update(21))
+        self.assertIsNone(watcher.update(20))
+
+    def test_charging_status_reads_the_same_battery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "power_supply"
+            battery = root / "max1720x_bat_7-36"
+            battery.mkdir(parents=True)
+            (battery / "type").write_text("Battery\n")
+            (battery / "capacity").write_text("50\n")
+            (battery / "status").write_text("Charging\n")
+            self.assertIs(hev.read_charging(root), True)
+            (battery / "status").write_text("Discharging\n")
+            self.assertIs(hev.read_charging(root), False)
+            (battery / "status").write_text("Unknown\n")
+            self.assertIsNone(hev.read_charging(root))
+            (battery / "status").unlink()
+            self.assertIsNone(hev.read_charging(root))
+        self.assertIsNone(hev.read_charging(Path("/nonexistent/power_supply")))
+
+    def test_monitor_announces_each_level_once_and_stops(self):
+        readings = [50, 20, 19, 19, 10, 5]
+        submitted = []
+
+        def reader():
+            return "test", readings.pop(0) if readings else 5
+
+        monitor = hev.ThresholdMonitor(hev.ThresholdWatcher((20, 10, 5)), submitted.append, 0.01,
+                                       reader=reader, charging=lambda: False)
+        monitor.start()
+        deadline = time.monotonic() + 5
+        while len(submitted) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        monitor.close()
+        self.assertEqual(submitted, ["announce", "announce", "announce"])
+        self.assertFalse(monitor.is_alive())
+
+    def test_monitor_survives_a_failed_poll(self):
+        calls = []
+
+        def reader():
+            calls.append(None)
+            if len(calls) == 1:
+                raise RuntimeError("SteamVR unavailable")
+            return "kernel", 50
+
+        monitor = hev.ThresholdMonitor(hev.ThresholdWatcher((20,)), lambda _action: None, 0.01,
+                                       reader=reader, charging=lambda: None)
+        monitor.start()
+        deadline = time.monotonic() + 5
+        while len(calls) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        monitor.close()
+        self.assertTrue(monitor.watcher.primed)
 
 
 if __name__ == "__main__":

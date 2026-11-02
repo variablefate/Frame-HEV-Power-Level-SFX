@@ -29,6 +29,11 @@ EV_SYN, EV_KEY, SYN_REPORT, SYN_DROPPED = 0, 1, 0, 3
 KEY_POWER, KEY_AUX = 116, 353
 EVENT = struct.Struct("llHHi")
 DEFAULT_ASSETS = Path(__file__).resolve().parent / "assets" / "fvox"
+DEFAULT_THRESHOLDS = "20,10,5"
+DEFAULT_THRESHOLD_POLL = 120.0
+# A level re-arms this many points above itself, so a reading that drifts up
+# and back down does not announce the same level twice.
+THRESHOLD_HYSTERESIS = 2
 STEAM = Path.home() / ".steam/steam/steamrtarm64/steam"
 OPENVR_LIBRARY = "/opt/steamvr/bin/linuxarm64/libopenvr_api.so"
 WORDS = ("zero one two three four five six seven eight nine ten eleven twelve "
@@ -117,6 +122,23 @@ def phrase(percent):
     return ["power_level_is", *number, "percent"]
 
 
+def parse_thresholds(text):
+    """Turn ``FRAME_HEV_THRESHOLDS`` into descending levels; blank disables."""
+    cleaned = (text or "").strip().lower()
+    if cleaned in ("", "off", "none", "disabled"):
+        return ()
+    levels = []
+    for piece in cleaned.replace(",", " ").split():
+        try:
+            level = int(piece)
+        except ValueError:
+            raise ValueError(f"threshold {piece!r} is not a whole percentage") from None
+        if not 1 <= level <= 99:
+            raise ValueError(f"threshold {level} is outside 1-99")
+        levels.append(level)
+    return tuple(sorted(set(levels), reverse=True))
+
+
 def openvr_battery_percent():
     """Read SteamVR's HMD battery property in the isolated probe subprocess.
 
@@ -191,6 +213,65 @@ def read_sysfs_battery(root):
     if len(preferred or candidates) != 1:
         raise RuntimeError("multiple system batteries found; cannot choose safely")
     return (preferred or candidates)[0]
+
+
+def read_charging(root=None):
+    """True while the battery reports Charging; None when sysfs is unreadable.
+
+    Threshold announcements only make sense on discharge, where the level falls
+    on its own; while plugged in the same number would move both ways.
+    """
+    root = Path("/sys/class/power_supply") if root is None else Path(root)
+    try:
+        path, _ = read_sysfs_battery(root)
+        status = (path / "status").read_text().strip()
+    except (OSError, RuntimeError):
+        return None
+    if status == "Charging":
+        return True
+    if status in ("Discharging", "Not charging", "Full"):
+        return False
+    return None
+
+
+class ThresholdWatcher:
+    """Decide when a battery level deserves an announcement, without repeats.
+
+    The first reading only arms the levels, so restarting the service on a low
+    battery stays quiet; after that a level fires at most once per discharge and
+    re-arms once the battery climbs :data:`THRESHOLD_HYSTERESIS` points above it.
+    Readings taken while charging never announce.
+    """
+
+    def __init__(self, thresholds, hysteresis=THRESHOLD_HYSTERESIS):
+        if hysteresis < 1:
+            raise ValueError("hysteresis must be at least one point")
+        self.thresholds = tuple(thresholds)
+        self.hysteresis = hysteresis
+        self.primed = False
+        self.armed = set()
+
+    def update(self, percent, charging=False):
+        """Return the lowest level just crossed, or None; mutate arming state."""
+        if not 0 <= percent <= 100:
+            raise ValueError("battery percentage must be between 0 and 100")
+        if not self.primed:
+            self.primed = True
+            self.armed = {level for level in self.thresholds if percent > level}
+            return None
+        crossed = [level for level in self.thresholds if level in self.armed and percent <= level]
+        if charging:
+            # A level crossed while plugged in is not news, but it must stay
+            # armed so the first reading after unplugging still announces it.
+            crossed = []
+        self.armed.difference_update(crossed)
+        for level in self.thresholds:
+            if percent >= min(100, level + self.hysteresis):
+                self.armed.add(level)
+        if not crossed:
+            return None
+        # A poll can miss several levels at once; the deepest one is the truth.
+        return min(crossed)
 
 
 def read_pcm(path):
@@ -498,6 +579,45 @@ class ActionRunner:
             thread.join(timeout=2.5)
 
 
+class ThresholdMonitor(threading.Thread):
+    """Poll the battery off the input thread and queue threshold announcements.
+
+    Reading through :func:`read_battery` keeps the spoken level identical to a
+    manual double tap. The OpenVR probe runs in a short-lived child process, so a
+    slow or hung SteamVR can never stall the thread that owns the power button.
+    """
+
+    def __init__(self, watcher, submit, interval, *, reader=read_battery, charging=read_charging):
+        super().__init__(name="frame-hev-thresholds", daemon=True)
+        self.watcher, self.submit, self.interval = watcher, submit, interval
+        self.reader, self.charging = reader, charging
+        self.stop_event = threading.Event()
+
+    def run(self):
+        while not self.stop_event.is_set():
+            try:
+                first = not self.watcher.primed
+                source, percent = self.reader()
+                level = self.watcher.update(percent, bool(self.charging()))
+                if first:
+                    LOG.info("thresholds armed at percent=%s levels=%s source=%s", percent,
+                             ",".join(map(str, sorted(self.watcher.armed, reverse=True))) or "none",
+                             source)
+                if level is not None:
+                    LOG.info("threshold=%s percent=%s source=%s action=announce", level, percent, source)
+                    self.submit("announce")
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                LOG.warning("threshold poll failed: %s", error)
+            if self.stop_event.wait(self.interval):
+                return
+
+    def close(self):
+        self.stop_event.set()
+        if self.is_alive():
+            # A poll in flight is a short-lived child process (2 s timeout).
+            self.join(timeout=2.5)
+
+
 def notify_ready():
     address = os.environ.get("NOTIFY_SOCKET")
     if address:
@@ -527,7 +647,7 @@ def run(args):
             preparing_for_sleep()  # Verify logind before taking ownership of power.
         key = KEY_POWER if args.button == "power" else KEY_AUX
         fd = wake_r = wake_w = None
-        runner = monitor = None
+        runner = monitor = thresholds = None
         quit_event = threading.Event()
         previous_handlers = {}
 
@@ -560,6 +680,10 @@ def run(args):
             controller = GestureController(args.double_tap_ms / 1000, args.long_hold_ms / 1000,
                                            args.debounce_ms / 1000)
             runner = ActionRunner(args, wake)
+            if args.thresholds:
+                thresholds = ThresholdMonitor(ThresholdWatcher(args.thresholds), runner.submit,
+                                              args.threshold_poll)
+                thresholds.start()
             for sig in (signal.SIGINT, signal.SIGTERM):
                 previous_handlers[sig] = signal.signal(sig, request_quit)
             offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
@@ -587,7 +711,8 @@ def run(args):
                 offset = new_offset
                 return now
 
-            LOG.info("Ready device=%s name=%s button=%s", device["path"], device["name"], args.button)
+            LOG.info("Ready device=%s name=%s button=%s thresholds=%s", device["path"], device["name"],
+                     args.button, ",".join(map(str, args.thresholds)) or "off")
             notify_ready()
             while not quit_event.is_set():
                 now = update_resume()
@@ -637,6 +762,8 @@ def run(args):
             # Closing the file descriptor always releases EVIOCGRAB, even on error.
             if fd is not None:
                 os.close(fd)
+            if thresholds:
+                thresholds.close()
             if runner:
                 runner.close()
             if monitor:
@@ -674,10 +801,17 @@ def doctor(args):
     except (OSError, RuntimeError) as error:
         report["power_device"] = {"error": str(error)}
     try:
+        report["thresholds"] = {
+            "levels": list(parse_thresholds(os.environ.get("FRAME_HEV_THRESHOLDS", DEFAULT_THRESHOLDS))),
+            "poll_seconds": float(os.environ.get("FRAME_HEV_THRESHOLD_POLL", DEFAULT_THRESHOLD_POLL)),
+        }
+    except ValueError as error:
+        report["thresholds"] = {"error": str(error)}
+    try:
         report["preparing_for_sleep"] = preparing_for_sleep()
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         report["logind"] = {"error": str(error)}
-    report["ok"] = (not any("error" in report[key] for key in ("battery", "assets", "power_device"))
+    report["ok"] = (not any("error" in report[key] for key in ("battery", "assets", "power_device", "thresholds"))
                     and "logind" not in report and bool(report["commands"]["pw-play"])
                     and report["commands"]["steam_exists"])
     print(json.dumps(report, indent=2))
@@ -705,6 +839,11 @@ def parser():
             child.add_argument("--long-hold-ms", type=float, default=float(os.environ.get("FRAME_HEV_LONG_HOLD_MS", "1000")))
             child.add_argument("--debounce-ms", type=float, default=25)
             child.add_argument("--resume-guard-ms", type=float, default=1000)
+            child.add_argument("--thresholds", default=os.environ.get("FRAME_HEV_THRESHOLDS", DEFAULT_THRESHOLDS),
+                               help="comma-separated percentages to announce automatically; 'off' disables")
+            child.add_argument("--threshold-poll", type=float,
+                               default=float(os.environ.get("FRAME_HEV_THRESHOLD_POLL", DEFAULT_THRESHOLD_POLL)),
+                               help="seconds between battery polls for thresholds")
     return result
 
 
@@ -726,6 +865,12 @@ def main(argv=None):
             arg_parser.error("FRAME_HEV_BUTTON must be power or aux")
         if not 0 < args.debounce_ms < args.double_tap_ms < args.long_hold_ms or args.resume_guard_ms < 0:
             arg_parser.error("timings require 0 < debounce < double-tap < long-hold and nonnegative resume guard")
+        try:
+            args.thresholds = parse_thresholds(args.thresholds)
+        except ValueError as error:
+            arg_parser.error(str(error))
+        if args.threshold_poll < 5:
+            arg_parser.error("--threshold-poll must be at least 5 seconds")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         if args.command == "doctor":
