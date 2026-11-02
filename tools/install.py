@@ -100,7 +100,8 @@ def install(source=ROOT, home=None, *, offline=False, source_dir=None):
     preflight()
     required = ["frame_hev.py", "assets/manifest.json", "assets/README.md", "README.md",
                 "VERSION", "LICENSE", "tools/fetch_sounds.py", "tools/control.sh",
-                "tools/uninstall.sh", "config/environment", "systemd/frame-hev.service"]
+                "tools/update.py", "tools/uninstall.sh", "config/environment",
+                "systemd/frame-hev.service"]
     for relative in required:
         if not (source / relative).is_file():
             raise RuntimeError(f"Incomplete download: {relative} is missing. Extract the whole release ZIP.")
@@ -128,6 +129,7 @@ def install(source=ROOT, home=None, *, offline=False, source_dir=None):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / relative, target)
         shutil.copyfile(source / "tools/uninstall.sh", staged / "uninstall.sh")
+        shutil.copyfile(source / "tools/update.py", staged / "update.py")
         fetch = [sys.executable, str(source / "tools/fetch_sounds.py"),
                  "--quiet", "--output", str(staged / "assets"), "--cache-dir", str(app / "assets"),
                  "--cache-dir", str(source / "assets")]

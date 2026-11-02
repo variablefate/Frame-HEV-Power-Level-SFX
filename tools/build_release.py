@@ -19,7 +19,7 @@ REQUIRED = (
     'VERSION', 'README.md', 'LICENSE', 'install.sh', 'install.ps1', 'frame_hev.py',
     'assets/README.md', 'assets/manifest.json', 'config/environment',
     'systemd/frame-hev.service', 'tools/install.sh', 'tools/install.py', 'tools/uninstall.sh',
-    'tools/control.sh', 'tools/fetch_sounds.py', 'tools/build_release.py',
+    'tools/control.sh', 'tools/fetch_sounds.py', 'tools/build_release.py', 'tools/update.py',
     'tools/framedrop.py', 'tools/framedrop-launcher.c', 'tools/framedrop-entry.py',
     'assets/framedrop-button.svg',
 )
@@ -27,7 +27,7 @@ OPTIONAL = (
     'LICENSE.md', 'docs/frame-development.md', 'docs/validation.md',
     'tools/frame-ui.mjs', 'tools/smoke_input.py', 'tools/measure_idle.py', 'tests/test_frame_hev.py',
     'tests/test_fetch_sounds.py', 'tests/test_install.py', 'tests/test_framedrop.py',
-    'docs/framedrop.md',
+    'tests/test_update.py', 'docs/framedrop.md',
 )
 RELEASE_URL = 'https://github.com/royal32/Frame-HEV-Power-Level-SFX/releases/download'
 FRAMEDROP_MANIFEST = 'frame-hev.framedrop.json'

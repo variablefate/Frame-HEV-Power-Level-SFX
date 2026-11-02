@@ -5,11 +5,14 @@ app_dir="$HOME/.local/share/frame-hev"
 action="${1:-announce}"
 if [[ $# -gt 0 ]]; then shift; fi
 case "$action" in
-    announce|doctor)
+    announce|doctor|update)
         if [[ -f "$HOME/.config/frame-hev/environment" ]]; then
             set -a
             source "$HOME/.config/frame-hev/environment"
             set +a
+        fi
+        if [[ "$action" == update ]]; then
+            exec python3 "$app_dir/update.py" "$@"
         fi
         exec python3 "$app_dir/frame_hev.py" "$action" "$@"
         ;;
@@ -30,6 +33,7 @@ Usage: ~/.local/bin/frame-hev [command]
   status                  Show service status
   logs                    Follow service logs (Ctrl+C to exit)
   start | stop | restart  Control the announcement service
+  update [--check]        Check GitHub for a newer release; --apply installs it
   uninstall [--purge]     Remove the app; --purge also removes settings/cache
 
 Settings: ~/.config/frame-hev/environment

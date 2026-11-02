@@ -186,6 +186,20 @@ Threshold checks read the same gauge as a double tap. If the two gauges
 disagree, set `FRAME_HEV_BATTERY_SOURCE=kernel` or `lowest` so the warning
 matches the level the headset actually shuts down on.
 
+## Updates
+
+`~/.local/bin/frame-hev update --check` reads `SHA256SUMS` from the project's
+latest GitHub release — the same release assets FrameDrop installs — and
+compares that version with the installed `VERSION`. `--apply` downloads the
+matching source archive, verifies it against that checksum, and runs its
+installer, which preserves your settings and audio cache. No API quota is
+involved.
+
+`FRAME_HEV_UPDATE_REPO` selects the repository; it defaults to this project.
+Both the archive and the checksum come over the same TLS connection, so the
+checksum catches a truncated or swapped download rather than a compromised
+account.
+
 ## Audio
 
 The source repository and release downloads contain **no Half-Life audio**.
