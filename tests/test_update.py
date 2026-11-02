@@ -32,12 +32,30 @@ class VersionTests(unittest.TestCase):
         with self.assertRaises(update.UpdateError):
             update.version_key("main")
 
-    def test_checksum_entry_selection(self):
-        text = "a" * 64 + "  frame-hev-0.2.0.zip\n" + "b" * 64 + "  other.zip\n"
-        self.assertEqual(update.checksum_from(text, "frame-hev-0.2.0.zip"), "a" * 64)
-        self.assertIsNone(update.checksum_from(text, "frame-hev-9.9.9.zip"))
-        self.assertIsNone(update.checksum_from("not-a-checksum  frame-hev-0.2.0.zip\n",
-                                               "frame-hev-0.2.0.zip"))
+    def test_sums_parsing_and_asset_selection(self):
+        digest = "a" * 64
+        text = (f"{digest}  frame-hev-0.2.0.zip\n"
+                + "b" * 64 + "  frame-hev-0.2.0-linux-arm64.zip\n"
+                + "c" * 64 + "  frame-hev-0.3.0.zip\n"
+                + "not-a-digest  frame-hev-9.9.9.zip\n")
+        sums = update.parse_sums(text)
+        self.assertEqual(sums["frame-hev-0.2.0.zip"], digest)
+        self.assertNotIn("frame-hev-9.9.9.zip", sums)
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return text.encode()
+
+        with mock.patch.object(update, "request", return_value=Response()):
+            version, name, found = update.release_assets("someone/repo")
+        self.assertEqual((version, name), ("0.3.0", "frame-hev-0.3.0.zip"))
+        self.assertEqual(found, "c" * 64)
 
     def test_installed_version_reads_the_repository_root_from_tools(self):
         self.assertEqual(update.installed_version(ROOT / "tools"),
@@ -73,12 +91,13 @@ class ExtractionTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
-    def report(self, installed, latest):
-        with (mock.patch.object(update, "latest_release", return_value=latest),
+    def report(self, installed, latest, *args):
+        with (mock.patch.object(update, "release_assets",
+                                return_value=(latest, f"frame-hev-{latest}.zip", "a" * 64)),
               mock.patch.object(update, "installed_version", return_value=installed)):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                code = update.main(["--json"])
+                code = update.main(["--json", *args])
         return code, json.loads(out.getvalue())
 
     def test_newer_release_is_reported(self):
@@ -94,7 +113,7 @@ class ReportTests(unittest.TestCase):
         self.assertFalse(report["newer"])
 
     def test_repository_errors_become_a_json_error(self):
-        with (mock.patch.object(update, "latest_release",
+        with (mock.patch.object(update, "release_assets",
                                 side_effect=update.UpdateError("no releases")),
               mock.patch.object(update, "installed_version", return_value="0.2.0")):
             out = io.StringIO()
@@ -104,7 +123,8 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue())["error"], "no releases")
 
     def test_json_apply_stays_a_single_document(self):
-        with (mock.patch.object(update, "latest_release", return_value="9.9.9"),
+        with (mock.patch.object(update, "release_assets",
+                                return_value=("9.9.9", "frame-hev-9.9.9.zip", "a" * 64)),
               mock.patch.object(update, "installed_version", return_value="0.2.0"),
               mock.patch.object(update, "apply_update", return_value="9.9.9")):
             out = io.StringIO()

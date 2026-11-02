@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Check GitHub for a newer Frame HEV and install it with its own installer.
 
-Follows the upstream repository by default. Set FRAME_HEV_UPDATE_REPO (or pass
---repo) to follow a fork, which is how a fork publishes its own releases. The
-release archive is checked against the SHA256SUMS published beside it; both come
-over the same TLS connection, so this detects a truncated or swapped download,
-not a compromised account.
+Follows the project's latest GitHub release, the same assets FrameDrop installs:
+`releases/latest/download/SHA256SUMS` names the source archive and its digest,
+so no API quota is involved. Set FRAME_HEV_UPDATE_REPO (or pass --repo) to
+follow a fork. The archive and its checksum come over the same TLS connection,
+so the checksum detects a truncated or swapped download, not a compromised
+account.
 """
 from __future__ import annotations
 
@@ -23,11 +24,10 @@ import urllib.error
 import urllib.request
 import zipfile
 
-DEFAULT_REPO = "royal32/Frame-HEV-Power-Level-SFX"
+DEFAULT_REPO = "royal32/Frame-HEV-Power-Level-SFX"  # sync with frame_hev.DEFAULT_UPDATE_REPO
 SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$")
-API = "https://api.github.com/repos/{repo}/releases/latest"
-DOWNLOAD = "https://github.com/{repo}/releases/download/v{version}/{name}"
+API = "https://github.com/{repo}/releases/latest/download/{name}"
+ZIP_NAME = re.compile(r"^frame-hev-(\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?)\.zip$")
 HEADERS = {"User-Agent": "frame-hev-updater"}
 TIMEOUT = 30
 HERE = Path(__file__).resolve().parent
@@ -63,22 +63,28 @@ def request(url):
     return urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS), timeout=TIMEOUT)
 
 
-def latest_release(repo):
-    with request(API.format(repo=repo)) as response:
-        report = json.load(response)
-    version = str(report.get("tag_name") or "").lstrip("v")
-    if not VERSION.match(version):
-        raise UpdateError(f"{repo} has no usable release tag ({version!r})")
-    return version
-
-
-def checksum_from(text, name):
-    """Pick one entry out of a SHA256SUMS file, or None when it is not listed."""
+def parse_sums(text):
+    """Parse a SHA256SUMS file into {filename: digest}."""
+    sums = {}
     for line in text.splitlines():
         digest, _, filename = line.partition("  ")
-        if filename.strip().lstrip("*") == name and re.fullmatch(r"[0-9a-fA-F]{64}", digest.strip()):
-            return digest.strip().lower()
-    return None
+        name = filename.strip().lstrip("*")
+        if name and re.fullmatch(r"[0-9a-fA-F]{64}", digest.strip()):
+            sums[name] = digest.strip().lower()
+    return sums
+
+
+def release_assets(repo):
+    """Return (version, source archive name, digest) from the latest release."""
+    url = API.format(repo=repo, name="SHA256SUMS")
+    with request(url) as response:
+        sums = parse_sums(response.read().decode(errors="replace"))
+    candidates = [(match.group(1), name) for name in sums
+                  if (match := ZIP_NAME.match(name)) and "-linux-arm64" not in name]
+    if not candidates:
+        raise UpdateError(f"{repo} latest release has no frame-hev-<version>.zip")
+    version, name = max(candidates, key=lambda item: version_key(item[0]))
+    return version, name, sums[name]
 
 
 def download(url, target):
@@ -110,21 +116,12 @@ def extract(archive, root):
     return root
 
 
-def install_from(archive, work, repo, version):
-    """Verify the archive against its published SHA256SUMS and run its installer."""
-    name = Path(archive).name
-    try:
-        with request(DOWNLOAD.format(repo=repo, version=version, name="SHA256SUMS")) as response:
-            expected = checksum_from(response.read().decode(errors="replace"), name)
-    except (OSError, urllib.error.URLError):
-        expected = None
-    got = hashlib.sha256(Path(archive).read_bytes()).hexdigest()
-    if expected is None:
-        print(f"checksum   no SHA256SUMS entry for {name}; continuing on TLS only", file=sys.stderr)
-    elif expected != got:
-        raise UpdateError(f"checksum mismatch for {name}: expected {expected}, downloaded {got}")
-    else:
-        print("checksum   verified", file=sys.stderr)
+def install_from(archive, work, name):
+    """Unpack a verified release archive and run its own installer."""
+    match = ZIP_NAME.fullmatch(name)
+    if not match:
+        raise UpdateError(f"unexpected release asset name {name!r}")
+    version = match.group(1)
     source = extract(archive, work / "source")
     installer = next(source.glob("*/tools/install.py"), None) or source / "tools/install.py"
     if not installer.is_file():
@@ -136,15 +133,16 @@ def install_from(archive, work, repo, version):
     return version
 
 
-def apply_update(repo, version):
+def apply_update(repo, name, digest):
     work = Path(tempfile.mkdtemp(prefix="frame-hev-update-"))
     try:
-        name = f"frame-hev-{version}.zip"
         archive = work / name
-        url = DOWNLOAD.format(repo=repo, version=version, name=name)
+        url = API.format(repo=repo, name=name)
         print(f"downloading {url}", file=sys.stderr)
-        download(url, archive)
-        return install_from(archive, work, repo, version)
+        if download(url, archive) != digest:
+            raise UpdateError(f"checksum mismatch for {name}; refusing to install")
+        print("checksum   verified", file=sys.stderr)
+        return install_from(archive, work, name)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -162,15 +160,15 @@ def main(argv=None):
     installed = installed_version(args.installed)
     report = {"repo": args.repo, "installed": installed}
     try:
-        latest = latest_release(args.repo)
-        newer = version_key(latest) > version_key(installed)
-        report.update(latest=latest, newer=newer)
+        version, name, digest = release_assets(args.repo)
+        newer = version_key(version) > version_key(installed)
+        report.update(latest=version, newer=newer)
         if not args.json:
             print(f"installed  v{installed}")
-            print(f"latest     v{latest}")
-            print(f"update available: v{installed} -> v{latest}" if newer else "already up to date")
+            print(f"latest     v{version}")
+            print(f"update available: v{installed} -> v{version}" if newer else "already up to date")
         if newer and args.apply:
-            report["applied"] = apply_update(args.repo, latest)
+            report["applied"] = apply_update(args.repo, name, digest)
             if not args.json:
                 print(f"updated to v{report['applied']}")
         if args.json:

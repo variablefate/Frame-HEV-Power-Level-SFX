@@ -8,6 +8,11 @@ in the original Half-Life HEV suit voice.
 - **Single press:** puts the Frame to sleep, with a short 350 ms delay.
 - **Hold:** opens Steam's normal power menu.
 
+> **Fork:** this repository adds automatic battery-threshold announcements, a
+> Desktop Mode control panel, and update checks to the upstream project. The
+> FrameDrop button below installs the upstream release; fork builds are
+> published on this repository's releases.
+
 Runs in the background and starts with your Steam session. No root access,
 additional packages, or SteamOS filesystem unlock needed.
 
@@ -215,10 +220,11 @@ SteamVR's displayed percentage when it is selected.
 ## Updates
 
 The panel's **Check for updates** button, or `~/.local/bin/frame-hev update
---check`, asks GitHub for the newest release and compares it with the installed
-`VERSION`. `~/.local/bin/frame-hev update --apply` downloads that release,
-checks it against the `SHA256SUMS` asset published beside it, and runs its
-installer, which preserves your settings and audio cache.
+--check`, reads `SHA256SUMS` from the project's latest GitHub release — the same
+release assets FrameDrop installs — and compares that version with the installed
+`VERSION`. `~/.local/bin/frame-hev update --apply` downloads the matching source
+archive, verifies it against that checksum, and runs its installer, which
+preserves your settings and audio cache. No API quota is involved.
 
 `FRAME_HEV_UPDATE_REPO` selects the repository. It defaults to the upstream
 project; a fork points it at itself so its own releases are followed. Both the

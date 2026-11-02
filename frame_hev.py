@@ -36,7 +36,8 @@ DEFAULT_THRESHOLD_POLL = 120.0
 # observed), which made low-battery warnings late.
 DEFAULT_BATTERY_SOURCE = "kernel"
 # Release repository followed by the panel's update check unless the settings
-# name another one (a fork points this at itself).
+# name another one (a fork points this at itself). Keep in sync with
+# tools/update.py; tests/test_update.py enforces the pair.
 DEFAULT_UPDATE_REPO = "royal32/Frame-HEV-Power-Level-SFX"
 # A level re-arms this many points above itself, so a reading that drifts up
 # and back down does not announce the same level twice.
