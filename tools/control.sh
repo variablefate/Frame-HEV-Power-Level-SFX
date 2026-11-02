@@ -4,6 +4,15 @@ set -euo pipefail
 app_dir="$HOME/.local/share/frame-hev"
 action="${1:-announce}"
 if [[ $# -gt 0 ]]; then shift; fi
+
+# A terminal or menu launch can lack a usable session bus; repair it so
+# systemctl --user works without asking the user to set variables by hand.
+runtime="/run/user/$(id -u)"
+if [[ ! -S "${XDG_RUNTIME_DIR:-}/bus" && -S "$runtime/bus" ]]; then
+    XDG_RUNTIME_DIR="$runtime"
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus"
+    export XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
+fi
 case "$action" in
     announce|doctor)
         if [[ -f "$HOME/.config/frame-hev/environment" ]]; then
@@ -19,6 +28,9 @@ case "$action" in
     logs)
         exec journalctl --user -u frame-hev.service -f "$@"
         ;;
+    panel)
+        exec "$HOME/.local/bin/frame-hev-panel" "$@"
+        ;;
     uninstall)
         exec bash "$app_dir/uninstall.sh" "$@"
         ;;
@@ -29,6 +41,7 @@ Usage: ~/.local/bin/frame-hev [command]
   doctor                  Show battery, input, and audio diagnostics
   status                  Show service status
   logs                    Follow service logs (Ctrl+C to exit)
+  panel                   Open the status panel (Desktop Mode)
   start | stop | restart  Control the announcement service
   uninstall [--purge]     Remove the app; --purge also removes settings/cache
 

@@ -139,6 +139,37 @@ def parse_thresholds(text):
     return tuple(sorted(set(levels), reverse=True))
 
 
+def settings_problem(text):
+    """Return why a settings file would stop the service, or None when it is usable.
+
+    Used by the control panel before it saves, so a typo cannot leave a service
+    that fails every restart.
+    """
+    values = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        name, value = stripped.split("=", 1)
+        values[name.strip()] = value.strip().strip("\"'")
+    try:
+        if "FRAME_HEV_THRESHOLDS" in values:
+            parse_thresholds(values["FRAME_HEV_THRESHOLDS"])
+        if "FRAME_HEV_VOLUME" in values:
+            volume = float(values["FRAME_HEV_VOLUME"])
+            if not 0 <= volume <= 1:
+                return "FRAME_HEV_VOLUME must be between 0.0 and 1.0."
+        if "FRAME_HEV_THRESHOLD_POLL" in values:
+            if float(values["FRAME_HEV_THRESHOLD_POLL"]) < 5:
+                return "FRAME_HEV_THRESHOLD_POLL must be at least 5 seconds."
+        if "FRAME_HEV_BUTTON" in values and values["FRAME_HEV_BUTTON"] not in ("power", "aux"):
+            return "FRAME_HEV_BUTTON must be power or aux."
+    except ValueError as error:
+        message = str(error)
+        return message[:1].upper() + message[1:] + "."
+    return None
+
+
 def openvr_battery_percent():
     """Read SteamVR's HMD battery property in the isolated probe subprocess.
 
@@ -371,6 +402,27 @@ def resolve_device(button, override=None, name=None):
     if button == "power" and device["keys"] != [KEY_POWER]:
         raise RuntimeError(f"{name}: refusing to grab a device with other keys: {device['keys']}")
     return device
+
+
+def session_environment(fallback=None):
+    """Point this process at the signed-in user's session bus when it is missing.
+
+    A menu entry, an SSH login, or a child of a desktop shell can inherit an
+    ``XDG_RUNTIME_DIR`` that has no ``bus`` socket; every ``systemctl --user``
+    call then fails with "failed to connect to user scope". Returns True when a
+    usable bus was found.
+    """
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR", ""))
+    if not os.environ.get("XDG_RUNTIME_DIR") or not (runtime / "bus").is_socket():
+        runtime = Path(fallback) if fallback else Path(f"/run/user/{os.getuid()}")
+    if not (runtime / "bus").is_socket():
+        return False
+    os.environ["XDG_RUNTIME_DIR"] = str(runtime)
+    address = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
+    socket_path = address[len("unix:path="):] if address.startswith("unix:path=") else ""
+    if not socket_path or not Path(socket_path).is_socket():
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={runtime / 'bus'}"
+    return True
 
 
 def preparing_for_sleep():

@@ -66,9 +66,11 @@ for command in ssh tar; do
     command -v "$command" >/dev/null || fail "$command is required."
 done
 files=(
-    VERSION README.md LICENSE frame_hev.py assets/README.md assets/manifest.json
+    VERSION README.md LICENSE frame_hev.py frame_hev_panel.py
+    assets/README.md assets/manifest.json assets/icon.svg
     config/environment systemd/frame-hev.service tools/install.sh tools/install.py
     tools/uninstall.sh tools/control.sh tools/fetch_sounds.py
+    tools/frame-hev-uninstall.sh desktop/frame-hev.desktop.in
 )
 for file in "${files[@]}"; do
     [[ -f "$repo_dir/$file" && ! -L "$repo_dir/$file" ]] || fail "Missing release file: $file. Extract the whole download first."

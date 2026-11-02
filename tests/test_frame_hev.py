@@ -1,7 +1,9 @@
 import importlib.util
 import ctypes
 import json
+import os
 from pathlib import Path
+import socket
 import tempfile
 import subprocess
 from types import SimpleNamespace
@@ -590,6 +592,31 @@ class RuntimeSafetyTests(unittest.TestCase):
                 monitor.close.assert_called_once()
 
 
+class SessionTests(unittest.TestCase):
+    def test_stale_runtime_directory_is_repaired(self):
+        """A menu launch can carry XDG_RUNTIME_DIR with no bus socket."""
+        with tempfile.TemporaryDirectory() as temporary:
+            fallback = Path(temporary) / "runtime"
+            fallback.mkdir()
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                server.bind(str(fallback / "bus"))
+                with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": temporary,
+                                                  "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent"},
+                                     clear=False):
+                    self.assertTrue(hev.session_environment(fallback=fallback))
+                    self.assertEqual(os.environ["XDG_RUNTIME_DIR"], str(fallback))
+                    self.assertEqual(os.environ["DBUS_SESSION_BUS_ADDRESS"],
+                                     f"unix:path={fallback / 'bus'}")
+            finally:
+                server.close()
+
+    def test_missing_bus_is_reported_instead_of_crashing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": temporary}, clear=False):
+                self.assertFalse(hev.session_environment(fallback=Path(temporary) / "absent"))
+
+
 class ThresholdTests(unittest.TestCase):
     def test_config_parsing_normalises_and_disables(self):
         self.assertEqual(hev.parse_thresholds("20,10,5"), (20, 10, 5))
@@ -663,6 +690,19 @@ class ThresholdTests(unittest.TestCase):
             (battery / "status").unlink()
             self.assertIsNone(hev.read_charging(root))
         self.assertIsNone(hev.read_charging(Path("/nonexistent/power_supply")))
+
+    def test_settings_validation_matches_what_the_service_accepts(self):
+        good = ("FRAME_HEV_BUTTON=power\nFRAME_HEV_VOLUME=0.65\n"
+                "FRAME_HEV_DOUBLE_TAP_MS=350\nFRAME_HEV_THRESHOLDS=20,10,5\n"
+                "FRAME_HEV_THRESHOLD_POLL=120\n")
+        self.assertIsNone(hev.settings_problem(good))
+        self.assertIsNone(hev.settings_problem("# nothing but a comment\n"))
+        for bad, expected in (("FRAME_HEV_THRESHOLDS=100\n", "1-99"),
+                              ("FRAME_HEV_VOLUME=1.5\n", "FRAME_HEV_VOLUME"),
+                              ("FRAME_HEV_THRESHOLD_POLL=2\n", "at least 5"),
+                              ("FRAME_HEV_BUTTON=volume\n", "power or aux")):
+            with self.subTest(bad=bad):
+                self.assertIn(expected, hev.settings_problem(bad))
 
     def test_monitor_announces_each_level_once_and_stops(self):
         readings = [50, 20, 19, 19, 10, 5]

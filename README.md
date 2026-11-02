@@ -110,15 +110,37 @@ With FrameDrop, install the newer package and launch **Frame HEV** again, then
 choose **Install / Update**. Choose **Uninstall** in that window to remove the
 background service while keeping your settings and audio cache.
 
-To uninstall, connect with `ssh steamos@frame.local` and run:
+In **Desktop Mode** the application menu entry is the quickest way: right-click
+**Frame HEV** and choose **Uninstall Frame HEV…**, or open the panel and press
+**Uninstall…**. The confirmation lists exactly what will be deleted first.
+
+To uninstall from a terminal, connect with `ssh steamos@frame.local` and run:
 
 ```sh
 ~/.local/bin/frame-hev uninstall --purge
 ```
 
-This removes the app, startup service, settings, and cached audio. Omit
-`--purge` to keep your settings and cache. The native power-button handler
-receives presses again when the HEV service stops.
+This removes the app, startup service, menu entry, panel, icons, settings, and
+cached audio. Omit `--purge` to keep your settings and cache. The native
+power-button handler receives presses again when the HEV service stops.
+
+## Application menu
+
+The installer adds **Frame HEV** to the application menu in Desktop Mode:
+
+- **Left-click** opens a small panel showing the battery percentage and its
+  source, the levels that announce automatically, and whether the background
+  service is running. Its buttons announce the current level, restart the
+  service, edit these settings, and start the uninstaller.
+- **Right-click → Uninstall Frame HEV…** opens a confirmation that lists every
+  path to be removed, then removes the app and its settings.
+- **Settings…** edits `~/.config/frame-hev/environment` in place and rejects
+  values that would stop the service from starting. Changes apply after
+  **Restart service**.
+
+The menu needs GTK3 Python bindings, which SteamOS provides. If the installer
+cannot find them it prints a notice and skips only the menu; announcements and
+the background service are unaffected.
 
 ## Controls and settings
 
@@ -126,6 +148,7 @@ These commands run **on the Frame**, either in its terminal or over SSH:
 
 ```sh
 ~/.local/bin/frame-hev announce   # Speak the current battery
+~/.local/bin/frame-hev panel      # Open the status panel
 ~/.local/bin/frame-hev status     # Check the service
 ~/.local/bin/frame-hev logs       # Follow logs; Ctrl+C to exit
 ~/.local/bin/frame-hev stop       # Temporarily restore normal power behavior

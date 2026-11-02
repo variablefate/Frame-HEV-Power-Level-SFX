@@ -17,11 +17,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REQUIRED = (
     'VERSION', 'README.md', 'LICENSE', 'install.sh', 'install.ps1', 'frame_hev.py',
-    'assets/README.md', 'assets/manifest.json', 'config/environment',
+    'frame_hev_panel.py', 'assets/README.md', 'assets/manifest.json', 'assets/icon.svg',
+    'desktop/frame-hev.desktop.in', 'config/environment',
     'systemd/frame-hev.service', 'tools/install.sh', 'tools/install.py', 'tools/uninstall.sh',
     'tools/control.sh', 'tools/fetch_sounds.py', 'tools/build_release.py',
-    'tools/framedrop.py', 'tools/framedrop-launcher.c', 'tools/framedrop-entry.py',
-    'assets/framedrop-button.svg',
+    'tools/frame-hev-uninstall.sh', 'tools/framedrop.py', 'tools/framedrop-launcher.c',
+    'tools/framedrop-entry.py', 'assets/framedrop-button.svg',
 )
 OPTIONAL = (
     'LICENSE.md', 'docs/frame-development.md', 'docs/validation.md',
