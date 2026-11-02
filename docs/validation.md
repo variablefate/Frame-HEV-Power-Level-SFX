@@ -221,3 +221,34 @@ not measurements of headset-wide CPU use, physical CPU wakeups, or battery
 runtime. Physical power-mode sleep/wake was user-confirmed. Aux resume remains
 verified through virtual input and private-bus signals, rather than a physical
 aux test. The published v0.1.2 assets were not replaced.
+
+## Battery thresholds and panel (v0.2.0)
+
+Tested on the Frame on November 2, 2026, SteamOS 0.4.3, aarch64.
+
+- All 111 tests pass. New coverage: threshold parsing, arming on the first
+  reading, one announcement per level per discharge, re-arming two points
+  above a level, charging crossings that stay armed, a poll that passes
+  several levels, the monitor's failure handling, kernel/SteamVR/lowest gauge
+  selection, settings validation and in-place rendering, the updater's version,
+  checksum, extraction, and JSON paths, and the uninstaller's full surface.
+- The installed service armed at the live reading and logged
+  `thresholds armed at percent=... levels=20,10,5`. At 20% it logged
+  `threshold=20 percent=17 source=kernel action=announce` followed by
+  `power_level_is seventeen percent`; the poll caught the level at 17 because
+  the battery was draining quickly. A manual announcement and a physical
+  double tap were user-confirmed. The 20% sound itself was not heard, while
+  SteamVR was re-initialising its audio device.
+- SteamVR's HMD percentage read 50-54% while UPower and the kernel read 46-49%
+  in the same checks. Thresholds therefore follow the kernel gauge by default;
+  `steamvr` matches Steam's display and `lowest` reads both.
+- Idle measurement with `tools/measure_idle.py --seconds 60` on a virtual
+  button: 0 CPU seconds, 0% of one core, 0 context switches, 4 threads. The
+  fourth thread is the threshold poller; with the kernel gauge it wakes only
+  every 120 seconds. `steamvr` and `lowest` add one OpenVR probe child per poll.
+- The panel was checked headlessly: battery and source labels, service switch
+  stop and start, the settings dialog and its save against a temporary
+  settings file, and the update check (installed 0.2.0 against upstream 0.1.2).
+- Not verified: a threshold announcement heard end to end; the FrameDrop
+  package for this fork (needs a Windows PC); graphical uninstall on a live
+  desktop.
