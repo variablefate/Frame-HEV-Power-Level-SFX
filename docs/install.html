@@ -32,14 +32,30 @@
     <a class="launch" id="launch" href="framedrop://install?manifest=https%3A%2F%2Fgithub.com%2Froyal32%2FFrame-HEV-Power-Level-SFX%2Freleases%2Flatest%2Fdownload%2Fframe-hev.framedrop.json">Open FrameDrop again</a>
     <nav class="links" aria-label="Installation help">
       <a href="https://framedropvr.com/">Get FrameDrop for Windows</a>
-      <a href="https://github.com/royal32/Frame-HEV-Power-Level-SFX/releases/latest">Manual downloads</a>
-      <a href="https://github.com/royal32/Frame-HEV-Power-Level-SFX#install">Installation guide</a>
+      <a id="downloads" href="https://github.com/royal32/Frame-HEV-Power-Level-SFX/releases/latest">Manual downloads</a>
+      <a id="guide" href="https://github.com/royal32/Frame-HEV-Power-Level-SFX#install">Installation guide</a>
     </nav>
   </main>
   <script>
     // Send one protocol request. An iframe plus a top-level navigation queues
     // two installation offers in FrameDrop 1.0.37.
-    window.location.href = document.getElementById("launch").href;
+    //
+    // The manifest follows the page's own repository, so a fork's GitHub Pages
+    // site installs the fork's release. ?manifest=<url> overrides it for a test
+    // build opened from disk; without either, the upstream release is used.
+    (function () {
+      var launch = document.getElementById("launch");
+      var upstream = "https://github.com/royal32/Frame-HEV-Power-Level-SFX";
+      var override = new URLSearchParams(window.location.search).get("manifest");
+      var pages = window.location.hostname.match(/^([^.]+)\.github\.io$/);
+      var repo = window.location.pathname.split("/").filter(Boolean)[0];
+      var base = pages && repo ? "https://github.com/" + pages[1] + "/" + repo : upstream;
+      var manifest = override || base + "/releases/latest/download/frame-hev.framedrop.json";
+      launch.href = "framedrop://install?manifest=" + encodeURIComponent(manifest);
+      document.getElementById("downloads").href = base + "/releases/latest";
+      document.getElementById("guide").href = base + "#install";
+      window.location.href = launch.href;
+    })();
   </script>
 </body>
 </html>

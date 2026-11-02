@@ -69,7 +69,7 @@ files=(
     VERSION README.md LICENSE frame_hev.py frame_hev_panel.py
     assets/README.md assets/manifest.json assets/icon.svg
     config/environment systemd/frame-hev.service tools/install.sh tools/install.py
-    tools/uninstall.sh tools/control.sh tools/fetch_sounds.py
+    tools/uninstall.sh tools/control.sh tools/fetch_sounds.py tools/update.py
     tools/frame-hev-uninstall.sh desktop/frame-hev.desktop.in
 )
 for file in "${files[@]}"; do

@@ -7,6 +7,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import re
 import stat
 import struct
@@ -20,7 +21,7 @@ REQUIRED = (
     'frame_hev_panel.py', 'assets/README.md', 'assets/manifest.json', 'assets/icon.svg',
     'desktop/frame-hev.desktop.in', 'config/environment',
     'systemd/frame-hev.service', 'tools/install.sh', 'tools/install.py', 'tools/uninstall.sh',
-    'tools/control.sh', 'tools/fetch_sounds.py', 'tools/build_release.py',
+    'tools/control.sh', 'tools/fetch_sounds.py', 'tools/build_release.py', 'tools/update.py',
     'tools/frame-hev-uninstall.sh', 'tools/framedrop.py', 'tools/framedrop-launcher.c',
     'tools/framedrop-entry.py', 'assets/framedrop-button.svg',
 )
@@ -76,7 +77,8 @@ def write_zip(path: Path, entries: list[tuple[str, bytes, int]], *, prefix: byte
             archive.writestr(info, data, compresslevel=9)
 
 
-def build(output: Path, version: str, files: list[Path], *, framedrop_launcher: Path | None = None) -> list[Path]:
+def build(output: Path, version: str, files: list[Path], *, framedrop_launcher: Path | None = None,
+          release_url: str = RELEASE_URL) -> list[Path]:
     launcher_data = validate_launcher(framedrop_launcher) if framedrop_launcher else None
     output.mkdir(parents=True, exist_ok=True)
     prefix = f'frame-hev-{version}'
@@ -111,7 +113,7 @@ def build(output: Path, version: str, files: list[Path], *, framedrop_launcher: 
         manifest = output / FRAMEDROP_MANIFEST
         manifest.write_text(json.dumps({
             'schema': 'framedrop.install/v1', 'name': 'Frame HEV',
-            'files': [{'url': f'{RELEASE_URL}/v{version}/{native.name}',
+            'files': [{'url': f'{release_url}/v{version}/{native.name}',
                        'sha256': hashlib.sha256(native.read_bytes()).hexdigest()}],
         }, indent=2) + '\n', encoding='utf-8')
         artifacts.extend([native, framedrop_zip, manifest])
@@ -128,6 +130,8 @@ def main() -> None:
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'dist', help='Destination directory (default: repository dist/)')
     parser.add_argument('--list', action='store_true', help='List allowlisted files without creating archives')
     parser.add_argument('--framedrop-launcher', type=Path, help='Linux ARM64 frame-hev-setup stub; also build the standalone installer, ZIP, and manifest')
+    parser.add_argument('--release-url', default=os.environ.get('FRAME_HEV_RELEASE_URL', RELEASE_URL),
+                        help='download base used in the FrameDrop manifest (default: the upstream repository)')
     args = parser.parse_args()
     try:
         files = files_for_release()
@@ -138,7 +142,9 @@ def main() -> None:
             for path in files:
                 print(path.relative_to(ROOT).as_posix())
         else:
-            for path in build(args.output_dir.resolve(), version, files, framedrop_launcher=args.framedrop_launcher):
+            for path in build(args.output_dir.resolve(), version, files,
+                              framedrop_launcher=args.framedrop_launcher,
+                              release_url=args.release_url.rstrip('/')):
                 print(path)
     except (OSError, ValueError) as error:
         parser.exit(1, f'build_release: {error}\n')

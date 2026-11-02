@@ -163,7 +163,8 @@ def install(source=ROOT, home=None, *, offline=False, source_dir=None):
     preflight()
     required = ["frame_hev.py", "frame_hev_panel.py", "assets/icon.svg", "assets/manifest.json",
                 "assets/README.md", "README.md", "VERSION", "LICENSE", "tools/fetch_sounds.py",
-                "tools/control.sh", "tools/uninstall.sh", "tools/frame-hev-uninstall.sh",
+                "tools/control.sh", "tools/uninstall.sh", "tools/update.py",
+                "tools/frame-hev-uninstall.sh",
                 "desktop/frame-hev.desktop.in", "config/environment", "systemd/frame-hev.service"]
     for relative in required:
         if not (source / relative).is_file():
@@ -194,6 +195,7 @@ def install(source=ROOT, home=None, *, offline=False, source_dir=None):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / relative, target)
         shutil.copyfile(source / "tools/uninstall.sh", staged / "uninstall.sh")
+        shutil.copyfile(source / "tools/update.py", staged / "update.py")
         fetch = [sys.executable, str(source / "tools/fetch_sounds.py"),
                  "--quiet", "--output", str(staged / "assets"), "--cache-dir", str(app / "assets"),
                  "--cache-dir", str(source / "assets")]

@@ -34,7 +34,7 @@ foreach ($command in @('ssh', 'scp', 'tar')) {
 $files = @(
     'VERSION', 'README.md', 'LICENSE', 'frame_hev.py', 'assets/README.md', 'assets/manifest.json',
     'config/environment', 'systemd/frame-hev.service', 'tools/install.sh', 'tools/install.py',
-    'tools/uninstall.sh', 'tools/control.sh', 'tools/fetch_sounds.py',
+    'tools/uninstall.sh', 'tools/control.sh', 'tools/fetch_sounds.py', 'tools/update.py',
     'frame_hev_panel.py', 'assets/icon.svg', 'desktop/frame-hev.desktop.in',
     'tools/frame-hev-uninstall.sh'
 )

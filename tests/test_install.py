@@ -271,6 +271,7 @@ class InstallTests(unittest.TestCase):
             self.assertEqual(helper.stat().st_mode & 0o777, 0o755)
             self.assertIn('"/usr/bin/python3"', panel.read_text())
             self.assertTrue((home / ".local/share/frame-hev/frame_hev_panel.py").is_file())
+            self.assertTrue((home / ".local/share/frame-hev/update.py").is_file())
             self.assertTrue((home / ".local/share/icons/hicolor/scalable/apps/frame-hev.svg").is_file())
 
     def test_install_without_gtk_keeps_the_service_and_skips_the_menu(self):

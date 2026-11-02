@@ -128,15 +128,16 @@ power-button handler receives presses again when the HEV service stops.
 
 The installer adds **Frame HEV** to the application menu in Desktop Mode:
 
-- **Left-click** opens a small panel showing the battery percentage and its
-  source, the levels that announce automatically, and whether the background
-  service is running. Its buttons announce the current level, restart the
-  service, edit these settings, and start the uninstaller.
+- **Left-click** opens a small panel with the battery percentage and its source,
+  a running/paused dot for the background service, and a switch that starts or
+  stops that service. **Announce now** speaks the current level, **Settings…**
+  opens real controls instead of a text file, and **Check for updates** follows
+  this project's GitHub releases.
 - **Right-click → Uninstall Frame HEV…** opens a confirmation that lists every
   path to be removed, then removes the app and its settings.
-- **Settings…** edits `~/.config/frame-hev/environment` in place and rejects
-  values that would stop the service from starting. Changes apply after
-  **Restart service**.
+- **Settings…** edits the settings as toggles, a volume slider, and a poll
+  interval, then saves and restarts the service. Values that would stop the
+  service from starting are rejected before anything is written.
 
 The menu needs GTK3 Python bindings, which SteamOS provides. If the installer
 cannot find them it prints a notice and skips only the menu; announcements and
@@ -151,6 +152,7 @@ These commands run **on the Frame**, either in its terminal or over SSH:
 ~/.local/bin/frame-hev panel      # Open the status panel
 ~/.local/bin/frame-hev status     # Check the service
 ~/.local/bin/frame-hev logs       # Follow logs; Ctrl+C to exit
+~/.local/bin/frame-hev update --check   # Is a newer release available?
 ~/.local/bin/frame-hev stop       # Temporarily restore normal power behavior
 ~/.local/bin/frame-hev start
 ```
@@ -165,6 +167,7 @@ Edit `~/.config/frame-hev/environment`, then run
 | `FRAME_HEV_BUTTON` | `power` | Use `aux` for the button above power instead |
 | `FRAME_HEV_THRESHOLDS` | `20,10,5` | Levels announced automatically while discharging, or `off` |
 | `FRAME_HEV_THRESHOLD_POLL` | `120` | Seconds between battery checks for those announcements |
+| `FRAME_HEV_UPDATE_REPO` | `royal32/Frame-HEV-Power-Level-SFX` | GitHub repository checked for updates |
 
 Aux mode also allows the button's normal action to occur. Power mode is the
 tested default. After waking the Frame, wait one second before double-tapping;
@@ -203,6 +206,19 @@ seconds between battery checks. Apply either change with
 
 Threshold checks read the same source as a double tap: SteamVR's displayed
 percentage when it is available, the kernel value otherwise.
+
+## Updates
+
+The panel's **Check for updates** button, or `~/.local/bin/frame-hev update
+--check`, asks GitHub for the newest release and compares it with the installed
+`VERSION`. `~/.local/bin/frame-hev update --apply` downloads that release,
+checks it against the `SHA256SUMS` asset published beside it, and runs its
+installer, which preserves your settings and audio cache.
+
+`FRAME_HEV_UPDATE_REPO` selects the repository. It defaults to the upstream
+project; a fork points it at itself so its own releases are followed. Both the
+archive and the checksum come over the same TLS connection, so the checksum
+catches a truncated or swapped download rather than a compromised account.
 
 ## Audio
 

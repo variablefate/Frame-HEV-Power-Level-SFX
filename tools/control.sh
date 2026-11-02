@@ -14,11 +14,14 @@ if [[ ! -S "${XDG_RUNTIME_DIR:-}/bus" && -S "$runtime/bus" ]]; then
     export XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
 fi
 case "$action" in
-    announce|doctor)
+    announce|doctor|update)
         if [[ -f "$HOME/.config/frame-hev/environment" ]]; then
             set -a
             source "$HOME/.config/frame-hev/environment"
             set +a
+        fi
+        if [[ "$action" == update ]]; then
+            exec python3 "$app_dir/update.py" "$@"
         fi
         exec python3 "$app_dir/frame_hev.py" "$action" "$@"
         ;;
@@ -42,6 +45,7 @@ Usage: ~/.local/bin/frame-hev [command]
   status                  Show service status
   logs                    Follow service logs (Ctrl+C to exit)
   panel                   Open the status panel (Desktop Mode)
+  update [--check]        Check GitHub for a newer release; --apply installs it
   start | stop | restart  Control the announcement service
   uninstall [--purge]     Remove the app; --purge also removes settings/cache
 
