@@ -341,15 +341,45 @@ class Panel(Gtk.Window):
             area.pack_start(holder, False, False, 0)
 
         section("Automatic announcements")
-        area.pack_start(Gtk.Label(xalign=0, label="Speak as the battery passes:"), False, False, 0)
+        area.pack_start(Gtk.Label(xalign=0, label="Announce when the battery drops through:"),
+                        False, False, 0)
         toggles = {}
         grid = Gtk.Grid(column_homogeneous=True, column_spacing=6, row_spacing=6)
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b".hev-level { padding: 8px 12px; }")
         for index, level in enumerate(levels):
-            toggle = Gtk.ToggleButton(label=f"{level}%")
+            toggle = Gtk.CheckButton(label=f"{level}%")
             toggle.set_active(level in selected)
+            toggle.set_tooltip_text(f"Announce at {level}% while discharging")
+            toggle.get_style_context().add_class("hev-level")
+            toggle.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             grid.attach(toggle, index % 6, index // 6, 1, 1)
             toggles[level] = toggle
         area.pack_start(grid, False, False, 0)
+
+        summary = Gtk.Label(xalign=0)
+        summary.set_line_wrap(True)
+        summary.set_max_width_chars(56)
+
+        def refresh_summary(*_ignored):
+            chosen = sorted((level for level, box in toggles.items() if box.get_active()), reverse=True)
+            summary.set_text("Announcing at " + ", ".join(f"{level}%" for level in chosen)
+                             + " while discharging." if chosen
+                             else "Automatic announcements are off.")
+
+        for toggle in toggles.values():
+            toggle.connect("toggled", refresh_summary)
+        refresh_summary()
+        area.pack_start(summary, False, False, 0)
+
+        hint = Gtk.Label(xalign=0)
+        hint.set_line_wrap(True)
+        hint.set_max_width_chars(56)
+        hint.get_style_context().add_class("dim-label")
+        hint.set_text("A level announces after the battery has been above it. If the battery "
+                      "is already below a level you just enabled, that level starts after the "
+                      "next charge above it.")
+        area.pack_start(hint, False, False, 0)
 
         poll = Gtk.ComboBoxText()
         current_poll = int(number(values, "FRAME_HEV_THRESHOLD_POLL", frame_hev.DEFAULT_THRESHOLD_POLL))
