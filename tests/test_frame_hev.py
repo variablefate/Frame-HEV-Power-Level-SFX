@@ -306,6 +306,20 @@ class SteamVRBatteryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             hev.read_battery(source="upower")
 
+    def test_lowest_source_takes_the_lesser_gauge(self):
+        with (mock.patch.object(hev.subprocess, "run",
+                                return_value=subprocess.CompletedProcess([], 0, stdout=json.dumps({"percent": 50}))),
+              mock.patch.object(hev, "read_sysfs_battery", return_value=(Path("/battery"), 46))):
+            self.assertEqual(hev.read_battery(source="lowest"), (Path("/battery"), 46))
+        with (mock.patch.object(hev.subprocess, "run",
+                                return_value=subprocess.CompletedProcess([], 0, stdout=json.dumps({"percent": 40}))),
+              mock.patch.object(hev, "read_sysfs_battery", return_value=(Path("/battery"), 46))):
+            self.assertEqual(hev.read_battery(source="lowest"), ("openvr:hmd", 40))
+        with (mock.patch.object(hev.subprocess, "run", side_effect=OSError("missing")),
+              mock.patch.object(hev, "read_sysfs_battery", return_value=(Path("/battery"), 46)),
+              self.assertLogs("frame-hev", level="WARNING")):
+            self.assertEqual(hev.read_battery(source="lowest"), (Path("/battery"), 46))
+
     def test_probe_timeout_or_crash_falls_back_without_interrupting_button_handling(self):
         for error in (subprocess.TimeoutExpired("probe", 2), subprocess.CalledProcessError(-11, "probe"), OSError("missing")):
             with (self.subTest(error=type(error)), mock.patch.object(hev.subprocess, "run", side_effect=error),
@@ -725,11 +739,12 @@ class ThresholdTests(unittest.TestCase):
                 "FRAME_HEV_THRESHOLD_POLL=120\n")
         self.assertIsNone(hev.settings_problem(good))
         self.assertIsNone(hev.settings_problem("# nothing but a comment\n"))
+        self.assertIsNone(hev.settings_problem("FRAME_HEV_BATTERY_SOURCE=lowest\n"))
         for bad, expected in (("FRAME_HEV_THRESHOLDS=100\n", "1-99"),
                               ("FRAME_HEV_VOLUME=1.5\n", "FRAME_HEV_VOLUME"),
                               ("FRAME_HEV_THRESHOLD_POLL=2\n", "at least 5"),
                               ("FRAME_HEV_BUTTON=volume\n", "power or aux"),
-                              ("FRAME_HEV_BATTERY_SOURCE=upower\n", "kernel, steamvr, or auto")):
+                              ("FRAME_HEV_BATTERY_SOURCE=upower\n", "kernel, steamvr, auto, or lowest")):
             with self.subTest(bad=bad):
                 self.assertIn(expected, hev.settings_problem(bad))
 

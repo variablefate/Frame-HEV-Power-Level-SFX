@@ -152,6 +152,7 @@ class Panel(Gtk.Window):
 
         self.levels = Gtk.Label(xalign=0)
         self.levels.set_line_wrap(True)
+        self.levels.set_max_width_chars(56)
         box.pack_start(self.levels, False, False, 0)
 
         service_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -373,9 +374,14 @@ class Panel(Gtk.Window):
         kernel_radio = Gtk.RadioButton.new_with_label(None, "OS gauge — matches the level the headset shuts down at")
         steam_radio = Gtk.RadioButton.new_with_label_from_widget(kernel_radio,
                                                                  "SteamVR — matches the percentage Steam displays")
-        (steam_radio if values.get("FRAME_HEV_BATTERY_SOURCE") == "steamvr" else kernel_radio).set_active(True)
+        lowest_radio = Gtk.RadioButton.new_with_label_from_widget(kernel_radio,
+                                                                  "Lowest of both — warn at whichever reads lower")
+        (steam_radio if values.get("FRAME_HEV_BATTERY_SOURCE") == "steamvr" else
+         lowest_radio if values.get("FRAME_HEV_BATTERY_SOURCE") == "lowest" else
+         kernel_radio).set_active(True)
         gauges.pack_start(kernel_radio, False, False, 0)
         gauges.pack_start(steam_radio, False, False, 0)
+        gauges.pack_start(lowest_radio, False, False, 0)
         area.pack_start(gauges, False, False, 0)
 
         section("Power button")
@@ -404,7 +410,8 @@ class Panel(Gtk.Window):
                 "FRAME_HEV_DOUBLE_TAP_MS": str(int(tap.get_value())),
                 "FRAME_HEV_THRESHOLDS": ",".join(map(str, chosen)) or "off",
                 "FRAME_HEV_THRESHOLD_POLL": poll.get_active_id() or str(current_poll),
-                "FRAME_HEV_BATTERY_SOURCE": "steamvr" if steam_radio.get_active() else "kernel",
+                "FRAME_HEV_BATTERY_SOURCE": ("steamvr" if steam_radio.get_active() else
+                                             "lowest" if lowest_radio.get_active() else "kernel"),
             }
             text = frame_hev.render_settings(original, replacement)
             problem = frame_hev.settings_problem(text)

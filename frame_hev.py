@@ -196,8 +196,8 @@ def settings_problem(text):
                 return "FRAME_HEV_THRESHOLD_POLL must be at least 5 seconds."
         if "FRAME_HEV_BUTTON" in values and values["FRAME_HEV_BUTTON"] not in ("power", "aux"):
             return "FRAME_HEV_BUTTON must be power or aux."
-        if "FRAME_HEV_BATTERY_SOURCE" in values and values["FRAME_HEV_BATTERY_SOURCE"] not in ("kernel", "steamvr", "auto"):
-            return "FRAME_HEV_BATTERY_SOURCE must be kernel, steamvr, or auto."
+        if "FRAME_HEV_BATTERY_SOURCE" in values and values["FRAME_HEV_BATTERY_SOURCE"] not in ("kernel", "steamvr", "auto", "lowest"):
+            return "FRAME_HEV_BATTERY_SOURCE must be kernel, steamvr, auto, or lowest."
     except ValueError as error:
         message = str(error)
         return message[:1].upper() + message[1:] + "."
@@ -245,14 +245,16 @@ def read_battery(root=None, source=None):
 
     ``source`` (or FRAME_HEV_BATTERY_SOURCE) is ``kernel`` to follow the OS
     gauge that governs shutdown, ``steamvr`` to prefer SteamVR's displayed
-    level, or ``auto`` to prefer SteamVR and fall back to the kernel. SteamVR
-    reads several points high, so the kernel is the default for warnings.
+    level, ``auto`` to prefer SteamVR and fall back to the kernel, or
+    ``lowest`` to read both and take the lower one so warnings are never late.
+    SteamVR reads several points high, so the kernel is the default.
     """
     if root is not None:
         return read_sysfs_battery(root)
     source = (source or os.environ.get("FRAME_HEV_BATTERY_SOURCE", DEFAULT_BATTERY_SOURCE)).lower()
-    if source not in ("kernel", "steamvr", "auto"):
+    if source not in ("kernel", "steamvr", "auto", "lowest"):
         raise ValueError(f"unknown battery source {source!r}")
+    kernel = read_sysfs_battery(Path("/sys/class/power_supply")) if source == "lowest" else None
     if source != "kernel":
         try:
             # Keep native API failures and hangs away from the process holding
@@ -263,9 +265,13 @@ def read_battery(root=None, source=None):
             percent = report.get("percent") if isinstance(report, dict) else None
             if type(percent) is not int or not 0 <= percent <= 100:
                 raise ValueError("invalid OpenVR battery probe result")
+            if kernel is not None:
+                return ("openvr:hmd", percent) if percent < kernel[1] else kernel
             return "openvr:hmd", percent
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             LOG.warning("SteamVR battery unavailable (%s); using raw kernel level", error)
+    if kernel is not None:
+        return kernel
     return read_sysfs_battery(Path("/sys/class/power_supply"))
 
 
