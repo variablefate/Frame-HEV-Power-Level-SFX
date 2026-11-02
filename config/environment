@@ -9,3 +9,6 @@ FRAME_HEV_DOUBLE_TAP_MS=350
 FRAME_HEV_THRESHOLDS=20,10,5
 # Seconds between battery checks for those automatic announcements.
 FRAME_HEV_THRESHOLD_POLL=120
+# Which gauge to follow: kernel (the OS level the headset shuts down on),
+# steamvr (the percentage Steam displays), or auto (SteamVR, then kernel).
+FRAME_HEV_BATTERY_SOURCE=kernel

@@ -208,6 +208,12 @@ class BatteryTests(unittest.TestCase):
 
 
 class SteamVRBatteryTests(unittest.TestCase):
+    def setUp(self):
+        # These tests exercise SteamVR's gauge; the default is the kernel gauge.
+        patcher = mock.patch.dict(os.environ, {"FRAME_HEV_BATTERY_SOURCE": "steamvr"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def library(self, fraction=0.45, *, init_error=0, property_error=0, interface_error=0):
         error_pointer = ctypes.POINTER(ctypes.c_int)
         def initialize(error, application):
@@ -277,6 +283,28 @@ class SteamVRBatteryTests(unittest.TestCase):
             self.assertEqual(query.call_args.kwargs["timeout"], 2)
             self.assertTrue(query.call_args.kwargs["check"])
             kernel.assert_not_called()
+
+    def test_default_source_follows_the_kernel_gauge(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FRAME_HEV_BATTERY_SOURCE", None)
+            with (mock.patch.object(hev, "read_sysfs_battery", return_value=(Path("/battery"), 46)) as kernel,
+                  mock.patch.object(hev.subprocess, "run") as query):
+                self.assertEqual(hev.read_battery(), (Path("/battery"), 46))
+                kernel.assert_called_once()
+                query.assert_not_called()
+
+    def test_explicit_source_overrides_the_setting(self):
+        with mock.patch.object(hev, "read_sysfs_battery", return_value=(Path("/battery"), 46)) as kernel:
+            self.assertEqual(hev.read_battery(source="kernel"), (Path("/battery"), 46))
+            kernel.assert_called_once()
+        with (mock.patch.object(hev.subprocess, "run",
+                                return_value=subprocess.CompletedProcess([], 0, stdout=json.dumps({"percent": 50}))),
+              mock.patch.object(hev, "read_sysfs_battery", return_value=(Path("/battery"), 46))):
+            self.assertEqual(hev.read_battery(source="steamvr"), ("openvr:hmd", 50))
+
+    def test_unknown_source_is_rejected(self):
+        with self.assertRaises(ValueError):
+            hev.read_battery(source="upower")
 
     def test_probe_timeout_or_crash_falls_back_without_interrupting_button_handling(self):
         for error in (subprocess.TimeoutExpired("probe", 2), subprocess.CalledProcessError(-11, "probe"), OSError("missing")):
@@ -700,7 +728,8 @@ class ThresholdTests(unittest.TestCase):
         for bad, expected in (("FRAME_HEV_THRESHOLDS=100\n", "1-99"),
                               ("FRAME_HEV_VOLUME=1.5\n", "FRAME_HEV_VOLUME"),
                               ("FRAME_HEV_THRESHOLD_POLL=2\n", "at least 5"),
-                              ("FRAME_HEV_BUTTON=volume\n", "power or aux")):
+                              ("FRAME_HEV_BUTTON=volume\n", "power or aux"),
+                              ("FRAME_HEV_BATTERY_SOURCE=upower\n", "kernel, steamvr, or auto")):
             with self.subTest(bad=bad):
                 self.assertIn(expected, hev.settings_problem(bad))
 

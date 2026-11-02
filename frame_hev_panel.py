@@ -201,7 +201,15 @@ class Panel(Gtk.Window):
         def work():
             try:
                 source, percent = frame_hev.read_battery()
-                battery = {"percent": percent, "source": str(source),
+                other = None
+                try:
+                    other_source, other_percent = frame_hev.read_battery(
+                        source="steamvr" if str(source) != "openvr:hmd" else "kernel")
+                    if other_percent != percent:
+                        other = ("SteamVR" if str(other_source) == "openvr:hmd" else "OS", other_percent)
+                except (OSError, RuntimeError, ValueError):
+                    other = None
+                battery = {"percent": percent, "source": str(source), "other": other,
                            "charging": frame_hev.read_charging()}
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
                 battery = {"error": str(error)}
@@ -220,8 +228,11 @@ class Panel(Gtk.Window):
             self.bar.set_value(battery["percent"])
             charging = battery["charging"]
             activity = "charging" if charging else ("discharging" if charging is False else "charge state unknown")
-            source = "SteamVR level" if battery["source"] == "openvr:hmd" else "kernel reading"
-            self.detail.set_text(f"{activity.capitalize()} · {source}")
+            gauge = "SteamVR" if battery["source"] == "openvr:hmd" else "OS"
+            detail = f"{activity.capitalize()} · {gauge} gauge"
+            if battery.get("other"):
+                detail += f" · {battery['other'][0]} shows {battery['other'][1]}%"
+            self.detail.set_text(detail)
         try:
             levels = frame_hev.parse_thresholds(configured(read_settings(), "FRAME_HEV_THRESHOLDS",
                                                            frame_hev.DEFAULT_THRESHOLDS))
@@ -357,6 +368,16 @@ class Panel(Gtk.Window):
         scale.connect("value-changed", lambda widget: volume_label.set_text(f"{int(widget.get_value())}%"))
         row("Volume", scale, volume_label)
 
+        section("Battery gauge")
+        gauges = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        kernel_radio = Gtk.RadioButton.new_with_label(None, "OS gauge — matches the level the headset shuts down at")
+        steam_radio = Gtk.RadioButton.new_with_label_from_widget(kernel_radio,
+                                                                 "SteamVR — matches the percentage Steam displays")
+        (steam_radio if values.get("FRAME_HEV_BATTERY_SOURCE") == "steamvr" else kernel_radio).set_active(True)
+        gauges.pack_start(kernel_radio, False, False, 0)
+        gauges.pack_start(steam_radio, False, False, 0)
+        area.pack_start(gauges, False, False, 0)
+
         section("Power button")
         radios = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         power = Gtk.RadioButton.new_with_label(None, "Double-tap the power button")
@@ -383,6 +404,7 @@ class Panel(Gtk.Window):
                 "FRAME_HEV_DOUBLE_TAP_MS": str(int(tap.get_value())),
                 "FRAME_HEV_THRESHOLDS": ",".join(map(str, chosen)) or "off",
                 "FRAME_HEV_THRESHOLD_POLL": poll.get_active_id() or str(current_poll),
+                "FRAME_HEV_BATTERY_SOURCE": "steamvr" if steam_radio.get_active() else "kernel",
             }
             text = frame_hev.render_settings(original, replacement)
             problem = frame_hev.settings_problem(text)

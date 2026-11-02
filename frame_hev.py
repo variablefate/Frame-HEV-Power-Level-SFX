@@ -31,6 +31,10 @@ EVENT = struct.Struct("llHHi")
 DEFAULT_ASSETS = Path(__file__).resolve().parent / "assets" / "fvox"
 DEFAULT_THRESHOLDS = "20,10,5"
 DEFAULT_THRESHOLD_POLL = 120.0
+# Which gauge every announcement follows. The kernel/UPower percentage is the
+# one the headset shuts down on; SteamVR's runs a few points higher (50 vs 46
+# observed), which made low-battery warnings late.
+DEFAULT_BATTERY_SOURCE = "kernel"
 # Release repository followed by the panel's update check unless the settings
 # name another one (a fork points this at itself).
 DEFAULT_UPDATE_REPO = "royal32/Frame-HEV-Power-Level-SFX"
@@ -192,6 +196,8 @@ def settings_problem(text):
                 return "FRAME_HEV_THRESHOLD_POLL must be at least 5 seconds."
         if "FRAME_HEV_BUTTON" in values and values["FRAME_HEV_BUTTON"] not in ("power", "aux"):
             return "FRAME_HEV_BUTTON must be power or aux."
+        if "FRAME_HEV_BATTERY_SOURCE" in values and values["FRAME_HEV_BATTERY_SOURCE"] not in ("kernel", "steamvr", "auto"):
+            return "FRAME_HEV_BATTERY_SOURCE must be kernel, steamvr, or auto."
     except ValueError as error:
         message = str(error)
         return message[:1].upper() + message[1:] + "."
@@ -234,9 +240,20 @@ def openvr_battery_percent():
         library.VR_ShutdownInternal()
 
 
-def read_battery(root=None):
-    """Prefer SteamVR's displayed level; an explicit root reads sysfs only."""
-    if root is None:
+def read_battery(root=None, source=None):
+    """Read the chosen battery gauge; an explicit root reads sysfs only.
+
+    ``source`` (or FRAME_HEV_BATTERY_SOURCE) is ``kernel`` to follow the OS
+    gauge that governs shutdown, ``steamvr`` to prefer SteamVR's displayed
+    level, or ``auto`` to prefer SteamVR and fall back to the kernel. SteamVR
+    reads several points high, so the kernel is the default for warnings.
+    """
+    if root is not None:
+        return read_sysfs_battery(root)
+    source = (source or os.environ.get("FRAME_HEV_BATTERY_SOURCE", DEFAULT_BATTERY_SOURCE)).lower()
+    if source not in ("kernel", "steamvr", "auto"):
+        raise ValueError(f"unknown battery source {source!r}")
+    if source != "kernel":
         try:
             # Keep native API failures and hangs away from the process holding
             # the power-device grab. No cached percentage or calibration offset.
@@ -249,7 +266,7 @@ def read_battery(root=None):
             return "openvr:hmd", percent
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             LOG.warning("SteamVR battery unavailable (%s); using raw kernel level", error)
-    return read_sysfs_battery(Path("/sys/class/power_supply") if root is None else root)
+    return read_sysfs_battery(Path("/sys/class/power_supply"))
 
 
 def read_sysfs_battery(root):
@@ -630,7 +647,9 @@ class ActionRunner:
                     continue
                 if action == "announce":
                     source, percent = read_battery()
-                    LOG.info("action=announce percent=%s source=%s phrase=%s", percent, source, " ".join(phrase(percent)))
+                    label = source if isinstance(source, str) else "kernel"
+                    LOG.info("action=announce percent=%s source=%s phrase=%s", percent, label,
+                             " ".join(phrase(percent)))
                     path = compose_wave(self.args.assets, percent)
                     self.execute(["pw-play", f"--volume={self.args.volume}", str(path)], 30, marker)
                 else:
@@ -678,13 +697,14 @@ class ThresholdMonitor(threading.Thread):
             try:
                 first = not self.watcher.primed
                 source, percent = self.reader()
+                label = source if isinstance(source, str) else "kernel"
                 level = self.watcher.update(percent, bool(self.charging()))
                 if first:
                     LOG.info("thresholds armed at percent=%s levels=%s source=%s", percent,
                              ",".join(map(str, sorted(self.watcher.armed, reverse=True))) or "none",
-                             source)
+                             label)
                 if level is not None:
-                    LOG.info("threshold=%s percent=%s source=%s action=announce", level, percent, source)
+                    LOG.info("threshold=%s percent=%s source=%s action=announce", level, percent, label)
                     self.submit("announce")
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 LOG.warning("threshold poll failed: %s", error)

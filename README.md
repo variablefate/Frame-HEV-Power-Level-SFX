@@ -167,6 +167,7 @@ Edit `~/.config/frame-hev/environment`, then run
 | `FRAME_HEV_BUTTON` | `power` | Use `aux` for the button above power instead |
 | `FRAME_HEV_THRESHOLDS` | `20,10,5` | Levels announced automatically while discharging, or `off` |
 | `FRAME_HEV_THRESHOLD_POLL` | `120` | Seconds between battery checks for those announcements |
+| `FRAME_HEV_BATTERY_SOURCE` | `kernel` | `kernel` (OS gauge), `steamvr` (Steam's display), or `auto` |
 | `FRAME_HEV_UPDATE_REPO` | `royal32/Frame-HEV-Power-Level-SFX` | GitHub repository checked for updates |
 
 Aux mode also allows the button's normal action to occur. Power mode is the
@@ -176,10 +177,13 @@ the wake press is ignored so it does not immediately put the headset to sleep.
 At 0%, the original “Armor compromised” clip plays, because the HEV vocabulary
 does not contain a recorded zero.
 
-Announcements use SteamVR's headset battery percentage to match Steam's
-display. The kernel's raw battery reading can differ by several points. If
-SteamVR cannot provide a valid reading, HEV uses the kernel value and logs that
-fallback; `frame-hev doctor` shows the selected source and the raw reading.
+Announcements follow the **OS battery gauge** by default: the percentage UPower
+and sysfs report, and the level the headset actually shuts down at. SteamVR's
+own HMD percentage runs a few points higher (50 vs 46 observed), which made
+low-battery warnings arrive late. Set `FRAME_HEV_BATTERY_SOURCE=steamvr` to
+follow Steam's display instead, or `auto` to prefer SteamVR when it is
+available and fall back to the kernel. `frame-hev doctor` shows the selected
+source and the raw reading.
 
 ## Automatic battery announcements
 
@@ -204,8 +208,8 @@ disable automatic announcements. `FRAME_HEV_THRESHOLD_POLL` sets the number of
 seconds between battery checks. Apply either change with
 `~/.local/bin/frame-hev restart`.
 
-Threshold checks read the same source as a double tap: SteamVR's displayed
-percentage when it is available, the kernel value otherwise.
+Threshold checks read the same gauge as a double tap: the OS level by default,
+SteamVR's displayed percentage when it is selected.
 
 ## Updates
 
