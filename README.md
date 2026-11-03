@@ -204,7 +204,9 @@ each configured level — 20%, 10%, and 5% by default:
   while plugged in still announces on the first reading after you unplug.
 - Nothing is announced right after the service starts. The first reading only
   arms the levels, so restarting on a low battery stays quiet instead of
-  talking over you.
+  talking over you. Starting exactly on a level arms that level, so the next
+  drop announces it; starting below a level leaves it until the battery
+  charges above it.
 - If a single check passes several levels — after a long sleep, for example —
   only the lowest crossed level is spoken, because that is the level you are
   actually at.
