@@ -741,6 +741,12 @@ class ThresholdTests(unittest.TestCase):
         self.assertIsNone(watcher.update(21))
         self.assertIsNone(watcher.update(20))
 
+    def test_a_coarse_poll_still_fires_a_single_crossed_level(self):
+        """At 1% per minute, a 120 s poll can land on 24 after 26; it still fires 25."""
+        watcher = hev.ThresholdWatcher((25,))
+        watcher.update(28)
+        self.assertEqual(watcher.update(24), 25)
+
     def test_starting_exactly_at_a_level_announces_the_next_drop(self):
         watcher = hev.ThresholdWatcher((50,))
         self.assertIsNone(watcher.update(50))
