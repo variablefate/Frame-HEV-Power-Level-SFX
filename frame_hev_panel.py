@@ -201,8 +201,11 @@ class Panel(Gtk.Window):
 
         def work():
             try:
+                values = frame_hev.parse_settings(read_settings())
                 kernel, steamvr = frame_hev.read_gauges()
-                source, percent = frame_hev.choose_battery(kernel, steamvr)
+                source, percent = frame_hev.choose_battery(
+                    kernel, steamvr,
+                    values.get("FRAME_HEV_BATTERY_SOURCE", frame_hev.DEFAULT_BATTERY_SOURCE))
                 other = None
                 if kernel is not None and steamvr is not None and kernel[1] != steamvr[1]:
                     other = (("OS", kernel[1]) if source == "openvr:hmd"
