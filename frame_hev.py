@@ -777,7 +777,12 @@ class ThresholdMonitor(threading.Thread):
                 first = not self.watcher.primed
                 source, percent = self.reader()
                 label = source if isinstance(source, str) else "kernel"
-                level = self.watcher.update(percent, bool(self.charging()))
+                charging = bool(self.charging())
+                level = self.watcher.update(percent, charging)
+                if LOG.isEnabledFor(logging.DEBUG):
+                    LOG.debug("threshold poll percent=%s source=%s charging=%s armed=%s",
+                              percent, label, charging,
+                              ",".join(map(str, sorted(self.watcher.armed, reverse=True))) or "none")
                 if first:
                     LOG.info("thresholds armed at percent=%s levels=%s source=%s", percent,
                              ",".join(map(str, sorted(self.watcher.armed, reverse=True))) or "none",
@@ -1050,7 +1055,9 @@ def main(argv=None):
             arg_parser.error(str(error))
         if args.threshold_poll < 5:
             arg_parser.error("--threshold-poll must be at least 5 seconds")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=(logging.DEBUG if os.environ.get("FRAME_HEV_DEBUG", "").lower()
+                               in ("1", "true", "yes") else logging.INFO),
+                        format="%(asctime)s %(levelname)s %(message)s")
     try:
         if args.command == "doctor":
             return doctor(args)

@@ -219,6 +219,10 @@ seconds between battery checks. Apply either change with
 Threshold checks read the same gauge as a double tap: the OS level by default,
 SteamVR's displayed percentage when it is selected.
 
+For a diagnosis, set `FRAME_HEV_DEBUG=1` in the settings and restart. Every
+poll is then logged with its reading, gauge, charging state, and armed levels;
+remove the line when you are done.
+
 ## Updates
 
 The panel's **Check for updates** button, or `~/.local/bin/frame-hev update
