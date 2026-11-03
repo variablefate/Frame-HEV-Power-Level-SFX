@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Check GitHub for a newer Frame HEV and install it with its own installer.
 
-Follows the project's latest GitHub release, the same assets FrameDrop installs:
+Follows the fork's latest GitHub release, the same assets FrameDrop installs:
 `releases/latest/download/SHA256SUMS` names the source archive and its digest,
 so no API quota is involved. Set FRAME_HEV_UPDATE_REPO (or pass --repo) to
-follow a fork. The archive and its checksum come over the same TLS connection,
-so the checksum detects a truncated or swapped download, not a compromised
-account.
+follow another repository. The archive and its checksum come over the same TLS
+connection, so the checksum detects a truncated or swapped download, not a
+compromised account.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-DEFAULT_REPO = "royal32/Frame-HEV-Power-Level-SFX"
+DEFAULT_REPO = "variablefate/Frame-HEV-Power-Level-SFX"
 SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 API = "https://github.com/{repo}/releases/latest/download/{name}"
 ZIP_NAME = re.compile(r"^frame-hev-(\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?)\.zip$")
@@ -77,8 +77,13 @@ def parse_sums(text):
 def release_assets(repo):
     """Return (version, source archive name, digest) from the latest release."""
     url = API.format(repo=repo, name="SHA256SUMS")
-    with request(url) as response:
-        sums = parse_sums(response.read().decode(errors="replace"))
+    try:
+        with request(url) as response:
+            sums = parse_sums(response.read().decode(errors="replace"))
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            raise UpdateError(f"{repo} has no published releases yet") from None
+        raise
     candidates = [(match.group(1), name) for name in sums
                   if (match := ZIP_NAME.match(name)) and "-linux-arm64" not in name]
     if not candidates:

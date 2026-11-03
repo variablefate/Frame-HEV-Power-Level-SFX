@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 import zipfile
 
@@ -51,6 +52,12 @@ class VersionTests(unittest.TestCase):
             version, name, found = update.release_assets("someone/repo")
         self.assertEqual((version, name), ("0.3.0", "frame-hev-0.3.0.zip"))
         self.assertEqual(found, "c" * 64)
+
+    def test_missing_release_is_reported_clearly(self):
+        error = urllib.error.HTTPError(update.API, 404, "Not Found", {}, None)
+        with mock.patch.object(update, "request", side_effect=error):
+            with self.assertRaisesRegex(update.UpdateError, "no published releases"):
+                update.release_assets("variablefate/Frame-HEV-Power-Level-SFX")
 
     def test_installed_version_reads_the_repository_root_from_tools(self):
         self.assertEqual(update.installed_version(ROOT / "tools"),

@@ -173,7 +173,7 @@ Edit `~/.config/frame-hev/environment`, then run
 | `FRAME_HEV_THRESHOLDS` | `20,10,5` | Levels announced automatically while discharging, or `off` |
 | `FRAME_HEV_THRESHOLD_POLL` | `120` | Seconds between battery checks for those announcements |
 | `FRAME_HEV_BATTERY_SOURCE` | `kernel` | `kernel` (OS gauge), `steamvr` (Steam's display), `auto`, or `lowest` |
-| `FRAME_HEV_UPDATE_REPO` | `royal32/Frame-HEV-Power-Level-SFX` | GitHub repository checked for updates |
+| `FRAME_HEV_UPDATE_REPO` | `variablefate/Frame-HEV-Power-Level-SFX` | GitHub repository checked for updates |
 
 Aux mode also allows the button's normal action to occur. Power mode is the
 tested default. After waking the Frame, wait one second before double-tapping;

@@ -502,7 +502,10 @@ class Panel(Gtk.Window):
         if problem is not None or not isinstance(report, dict):
             self.update_state = "idle"
             self.update_button.set_label("Check for updates")
-            self.note.set_text(f"Update check failed: {problem or 'unreadable answer'}")
+            if problem and "no published releases" in problem:
+                self.note.set_text("No releases published for this fork yet.")
+            else:
+                self.note.set_text(f"Update check failed: {problem or 'unreadable answer'}")
             return False
         if report.get("newer"):
             self.update_state = "offered"
