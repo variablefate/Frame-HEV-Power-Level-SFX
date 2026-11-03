@@ -271,3 +271,7 @@ Measured on the Frame on November 2, 2026 with the installed code:
 
 The 50% level fired at exactly 50% at 16:57:19 on November 2, `source=kernel`,
 five minutes after a restart at 56% armed it.
+
+With the interval at 120 s, the 50% level fired at 49% at 17:55:37 on November
+2, after arming at 53%. The poll landed one point below the level and still
+announced it.
