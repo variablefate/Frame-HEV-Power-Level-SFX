@@ -186,7 +186,7 @@ Announcements follow the **OS battery gauge** by default: the percentage UPower
 and sysfs report, and the level the headset actually shuts down at. SteamVR's
 own HMD percentage runs a few points higher (50 vs 46 observed), which made
 low-battery warnings arrive late. Set `FRAME_HEV_BATTERY_SOURCE=steamvr` to
-follow Steam's display instead, `auto` to prefer SteamVR when it is available
+follow Steam's display only, `auto` to prefer SteamVR when it is available
 and fall back to the kernel, or `lowest` to read both and follow the lower one
 so a warning can never be late — that mode costs a SteamVR probe per check.
 `frame-hev doctor` shows the selected source and the raw reading.
