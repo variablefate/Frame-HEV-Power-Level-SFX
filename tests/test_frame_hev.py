@@ -325,14 +325,39 @@ class SteamVRBatteryTests(unittest.TestCase):
             with (self.subTest(error=type(error)), mock.patch.object(hev.subprocess, "run", side_effect=error),
                   mock.patch.object(hev, "read_sysfs_battery", return_value=(Path("/battery"), 46)),
                   self.assertLogs("frame-hev", level="WARNING")):
-                self.assertEqual(hev.read_battery(), (Path("/battery"), 46))
+                self.assertEqual(hev.read_battery(source="auto"), (Path("/battery"), 46))
 
     def test_bad_probe_output_falls_back(self):
         for output in ("not json", "[]", '{"percent":null}', '{"percent":true}', '{"percent":101}', '{"percent":-1}'):
             with (self.subTest(output=output), mock.patch.object(hev.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=output)),
                   mock.patch.object(hev, "read_sysfs_battery", return_value=(Path("/battery"), 46)),
                   self.assertLogs("frame-hev", level="WARNING")):
-                self.assertEqual(hev.read_battery(), (Path("/battery"), 46))
+                self.assertEqual(hev.read_battery(source="auto"), (Path("/battery"), 46))
+
+    def test_steamvr_source_does_not_fall_back_to_the_kernel(self):
+        with (mock.patch.object(hev.subprocess, "run", side_effect=OSError("missing")),
+              mock.patch.object(hev, "read_sysfs_battery") as kernel):
+            with self.assertRaises(OSError):
+                hev.read_battery(source="steamvr")
+            kernel.assert_not_called()
+
+    def test_read_gauges_reads_each_once(self):
+        with (mock.patch.object(hev.subprocess, "run",
+                                return_value=subprocess.CompletedProcess(
+                                    [], 0, stdout=json.dumps({"percent": 50}))) as probe,
+              mock.patch.object(hev, "read_sysfs_battery",
+                                return_value=(Path("/battery"), 46)) as kernel):
+            self.assertEqual(hev.read_gauges(),
+                             ((Path("/battery"), 46), ("openvr:hmd", 50)))
+            probe.assert_called_once()
+            kernel.assert_called_once()
+
+    def test_choose_battery_uses_already_read_gauges(self):
+        kernel, steamvr = (Path("/battery"), 46), ("openvr:hmd", 50)
+        self.assertEqual(hev.choose_battery(kernel, steamvr, "kernel"), kernel)
+        self.assertEqual(hev.choose_battery(kernel, steamvr, "steamvr"), steamvr)
+        self.assertEqual(hev.choose_battery(kernel, steamvr, "auto"), steamvr)
+        self.assertEqual(hev.choose_battery(kernel, steamvr, "lowest"), kernel)
 
 
 class AudioTests(unittest.TestCase):

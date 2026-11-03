@@ -238,11 +238,80 @@ def openvr_battery_percent():
         library.VR_ShutdownInternal()
 
 
+def battery_source(source=None):
+    """Return a validated gauge name from an argument or the environment."""
+    chosen = (source or os.environ.get("FRAME_HEV_BATTERY_SOURCE", DEFAULT_BATTERY_SOURCE)).lower()
+    if chosen not in ("kernel", "steamvr", "auto", "lowest"):
+        raise ValueError(f"unknown battery source {chosen!r}")
+    return chosen
+
+
+def read_kernel_battery():
+    return read_sysfs_battery(Path("/sys/class/power_supply"))
+
+
+def read_steamvr_battery():
+    """Read SteamVR's HMD percentage in an isolated, short-lived process.
+
+    Native API failures and hangs stay away from the process holding the
+    power-device grab. No cached percentage or calibration offset.
+    """
+    result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "_openvr-battery"],
+                            capture_output=True, text=True, check=True, timeout=2)
+    report = json.loads(result.stdout)
+    percent = report.get("percent") if isinstance(report, dict) else None
+    if type(percent) is not int or not 0 <= percent <= 100:
+        raise ValueError("invalid OpenVR battery probe result")
+    return "openvr:hmd", percent
+
+
+def choose_battery(kernel, steamvr, source=None):
+    """Pick a reading from already-read gauges, without reading anything."""
+    source = battery_source(source)
+    if source == "kernel":
+        if kernel is None:
+            raise RuntimeError("kernel battery unavailable")
+        return kernel
+    if source == "steamvr":
+        if steamvr is None:
+            raise RuntimeError("SteamVR battery unavailable")
+        return steamvr
+    if source == "auto":
+        chosen = steamvr or kernel
+        if chosen is None:
+            raise RuntimeError("no battery gauge available")
+        return chosen
+    if kernel is None and steamvr is None:
+        raise RuntimeError("no battery gauge available")
+    if kernel is None:
+        return steamvr
+    if steamvr is None:
+        return kernel
+    return steamvr if steamvr[1] < kernel[1] else kernel
+
+
+def read_gauges():
+    """Read both gauges once; either may be None. Returns (kernel, steamvr)."""
+    kernel = steamvr = None
+    errors = []
+    try:
+        kernel = read_kernel_battery()
+    except (OSError, RuntimeError) as error:
+        errors.append(str(error))
+    try:
+        steamvr = read_steamvr_battery()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        errors.append(str(error))
+    if kernel is None and steamvr is None:
+        raise RuntimeError("; ".join(errors) or "no battery gauge available")
+    return kernel, steamvr
+
+
 def read_battery(root=None, source=None):
     """Read the chosen battery gauge; an explicit root reads sysfs only.
 
     ``source`` (or FRAME_HEV_BATTERY_SOURCE) is ``kernel`` to follow the OS
-    gauge that governs shutdown, ``steamvr`` to prefer SteamVR's displayed
+    gauge that governs shutdown, ``steamvr`` to require SteamVR's displayed
     level, ``auto`` to prefer SteamVR and fall back to the kernel, or
     ``lowest`` to read both and take the lower one so warnings are never late.
     SteamVR reads several points high, so ``kernel`` or ``lowest`` is the
@@ -250,33 +319,30 @@ def read_battery(root=None, source=None):
     """
     if root is not None:
         return read_sysfs_battery(root)
-    source = (source or os.environ.get("FRAME_HEV_BATTERY_SOURCE", DEFAULT_BATTERY_SOURCE)).lower()
-    if source not in ("kernel", "steamvr", "auto", "lowest"):
-        raise ValueError(f"unknown battery source {source!r}")
-    kernel = None
-    if source == "lowest":
+    source = battery_source(source)
+    if source == "kernel":
+        return read_kernel_battery()
+    if source == "steamvr":
+        return read_steamvr_battery()
+    if source == "auto":
         try:
-            kernel = read_sysfs_battery(Path("/sys/class/power_supply"))
-        except (OSError, RuntimeError) as error:
-            LOG.warning("kernel battery unavailable (%s); using SteamVR alone", error)
-    if source != "kernel":
-        try:
-            # Keep native API failures and hangs away from the process holding
-            # the power-device grab. No cached percentage or calibration offset.
-            result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "_openvr-battery"],
-                                    capture_output=True, text=True, check=True, timeout=2)
-            report = json.loads(result.stdout)
-            percent = report.get("percent") if isinstance(report, dict) else None
-            if type(percent) is not int or not 0 <= percent <= 100:
-                raise ValueError("invalid OpenVR battery probe result")
-            if kernel is not None:
-                return ("openvr:hmd", percent) if percent < kernel[1] else kernel
-            return "openvr:hmd", percent
+            return read_steamvr_battery()
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             LOG.warning("SteamVR battery unavailable (%s); using raw kernel level", error)
-    if kernel is not None:
+            return read_kernel_battery()
+    kernel = None
+    try:
+        kernel = read_kernel_battery()
+    except (OSError, RuntimeError) as error:
+        LOG.warning("kernel battery unavailable (%s); using SteamVR alone", error)
+    try:
+        steamvr = read_steamvr_battery()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        LOG.warning("SteamVR battery unavailable (%s); using raw kernel level", error)
+        if kernel is None:
+            raise
         return kernel
-    return read_sysfs_battery(Path("/sys/class/power_supply"))
+    return choose_battery(kernel, steamvr, "lowest")
 
 
 def read_sysfs_battery(root):
@@ -903,7 +969,7 @@ def doctor(args):
             report["battery"]["kernel"] = {"path": str(raw_path), "percent": raw_percent}
         except (OSError, RuntimeError) as error:
             report["battery"]["kernel"] = {"error": str(error)}
-    except (OSError, RuntimeError) as error:
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         report["battery"] = {"error": str(error)}
     try:
         report["assets"] = {"path": str(args.assets), **validate_assets(args.assets)}

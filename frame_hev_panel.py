@@ -201,15 +201,12 @@ class Panel(Gtk.Window):
 
         def work():
             try:
-                source, percent = frame_hev.read_battery()
+                kernel, steamvr = frame_hev.read_gauges()
+                source, percent = frame_hev.choose_battery(kernel, steamvr)
                 other = None
-                try:
-                    other_source, other_percent = frame_hev.read_battery(
-                        source="steamvr" if str(source) != "openvr:hmd" else "kernel")
-                    if other_percent != percent:
-                        other = ("SteamVR" if str(other_source) == "openvr:hmd" else "OS", other_percent)
-                except (OSError, RuntimeError, ValueError):
-                    other = None
+                if kernel is not None and steamvr is not None and kernel[1] != steamvr[1]:
+                    other = (("OS", kernel[1]) if source == "openvr:hmd"
+                             else ("SteamVR", steamvr[1]))
                 battery = {"percent": percent, "source": str(source), "other": other,
                            "charging": frame_hev.read_charging()}
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:

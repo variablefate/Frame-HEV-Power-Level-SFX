@@ -252,3 +252,22 @@ Tested on the Frame on November 2, 2026, SteamOS 0.4.3, aarch64.
 - Not verified: a threshold announcement heard end to end; the FrameDrop
   package for this fork (needs a Windows PC); graphical uninstall on a live
   desktop.
+
+### Polling cost
+
+Measured on the Frame on November 2, 2026 with the installed code:
+
+- A kernel read is a sysfs scan: 0.9 ms of CPU per poll. At the 120 s default
+  that is under 0.001% of one core; at 30 s it is under 0.003%.
+- A SteamVR probe is a short-lived Python process: 115 ms CPU and 139 ms wall
+  on average. `auto`, `steamvr`, and `lowest` spawn one per threshold poll.
+  At 120 s that is 3.5 CPU-seconds per hour (0.1% of one core); at 30 s it is
+  13.8 CPU-seconds per hour (0.38%). The kernel default never spawns it.
+- The panel reads both gauges in one pass, so a 30 s refresh costs one probe
+  while the window is open, not two.
+- The threshold thread adds one wakeup per interval and no measurable CPU when
+  polling the kernel: `tools/measure_idle.py --seconds 60` reports 0 CPU
+  seconds and 0 context switches with four threads.
+
+The 50% level fired at exactly 50% at 16:57:19 on November 2, `source=kernel`,
+five minutes after a restart at 56% armed it.
